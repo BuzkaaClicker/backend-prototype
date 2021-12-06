@@ -24,5 +24,10 @@ func writeInternalError(w http.ResponseWriter, errorMessage string) error {
 }
 
 func requestLog(r *http.Request) *logrus.Entry {
-	return logrus.WithField("remote_addr", r.RemoteAddr).WithField("path", r.URL.Path)
+	return logrus.
+		WithField("remote_addr", r.RemoteAddr).
+		WithField("url", r.URL).
+		WithField("z_referer", r.Header.Get("Referer")).
+		WithField("z_user_agent", r.Header.Get("User-Agent")).
+		WithField("z_x_forwared_for", r.Header.Get("X-Forwarded-For"))
 }

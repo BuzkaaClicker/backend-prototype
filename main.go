@@ -41,6 +41,13 @@ func setupLogger(verbose bool) {
 	})
 }
 
+func loggerMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestLog(r).Infoln("Handling request.")
+		next.ServeHTTP(w, r)
+    })
+}
+
 func main() {
 	flag.Parse()
 	setupLogger(os.Getenv("verbose") == "true")
@@ -60,6 +67,7 @@ func main() {
 	db := bun.NewDB(sqldb, pgdialect.New())
 
 	router := mux.NewRouter()
+	router.Use(loggerMiddleware)
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "dzialam")
 	})

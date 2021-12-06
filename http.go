@@ -16,11 +16,15 @@ type ErrorResponse struct {
 	ErrorMessage string `json:"error_message"`
 }
 
+func writeError(w http.ResponseWriter, statusCode int, errorMessage string) error {
+	setJsonContentType(w.Header())
+	w.WriteHeader(statusCode)
+	return json.NewEncoder(w).Encode(&ErrorResponse{ErrorMessage: errorMessage})
+}
+
 // Write http internal error status code and error message wrapped in json
 func writeInternalError(w http.ResponseWriter, errorMessage string) error {
-	setJsonContentType(w.Header())
-	w.WriteHeader(http.StatusInternalServerError)
-	return json.NewEncoder(w).Encode(&ErrorResponse{ErrorMessage: errorMessage})
+	return writeError(w, http.StatusInternalServerError, errorMessage)
 }
 
 func requestLog(r *http.Request) *logrus.Entry {
@@ -30,4 +34,8 @@ func requestLog(r *http.Request) *logrus.Entry {
 		WithField("z_referer", r.Header.Get("Referer")).
 		WithField("z_user_agent", r.Header.Get("User-Agent")).
 		WithField("z_x_forwared_for", r.Header.Get("X-Forwarded-For"))
+}
+
+func notFoundHandler(w http.ResponseWriter, r *http.Request) {
+	_ = writeError(w, http.StatusNotFound, "not found")
 }

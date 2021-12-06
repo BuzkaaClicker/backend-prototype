@@ -67,6 +67,7 @@ func main() {
 	db := bun.NewDB(sqldb, pgdialect.New())
 
 	router := mux.NewRouter()
+	router.NotFoundHandler = router.NewRoute().BuildOnly().HandlerFunc(notFoundHandler).GetHandler()
 	router.Use(loggerMiddleware)
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "dzialam")
@@ -74,7 +75,7 @@ func main() {
 
 	versionRouter := router.PathPrefix("/version").Subrouter()
 	versionController := VersionController{Repo: &PgVersionRepo{DB: db}}
-	versionRouter.HandleFunc("/latest", versionController.ServeLatest).Methods("GET")
+	versionRouter.HandleFunc("/latest", versionController.ServeLatestVersions).Methods("GET")
 
 	logrus.Infoln("Listening...")
 	http.ListenAndServe("127.0.0.1:2137", router)

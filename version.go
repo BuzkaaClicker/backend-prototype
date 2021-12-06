@@ -22,7 +22,7 @@ type VersionController struct {
 	Repo VersionRepo
 }
 
-func (c *VersionController) ServeLatest(w http.ResponseWriter, r *http.Request) {
+func (c *VersionController) ServeLatestVersions(w http.ResponseWriter, r *http.Request) {
 	versions, err := c.Repo.LatestVersions(r.Context())
 	if err != nil {
 		logrus.WithError(err).Errorln("Get latest version from repo failed!")

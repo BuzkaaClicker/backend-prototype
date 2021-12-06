@@ -41,11 +41,11 @@ func setupLogger(verbose bool) {
 	})
 }
 
-func loggerMiddleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func logHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestLog(r).Infoln("Handling request.")
 		next.ServeHTTP(w, r)
-    })
+	})
 }
 
 func main() {
@@ -68,7 +68,6 @@ func main() {
 
 	router := mux.NewRouter()
 	router.NotFoundHandler = router.NewRoute().BuildOnly().HandlerFunc(notFoundHandler).GetHandler()
-	router.Use(loggerMiddleware)
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "dzialam")
 	})
@@ -78,6 +77,6 @@ func main() {
 	versionRouter.HandleFunc("/latest", versionController.ServeLatestVersions).Methods("GET")
 
 	logrus.Infoln("Listening...")
-	http.ListenAndServe("127.0.0.1:2137", router)
+	http.ListenAndServe("127.0.0.1:2137", logHandler(router))
 	logrus.Exit(0)
 }

@@ -74,7 +74,7 @@ func main() {
 
 	versionRouter := router.PathPrefix("/version").Subrouter()
 	versionController := VersionController{Repo: &PgVersionRepo{DB: db}}
-	versionRouter.HandleFunc("/latest", versionController.ServeList).Methods("GET")
+	versionRouter.HandleFunc("/latest", versionController.ServeLatest).Methods("GET")
 
 	logrus.Infoln("Listening...")
 	http.ListenAndServe("127.0.0.1:2137", router)

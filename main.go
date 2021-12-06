@@ -8,9 +8,13 @@ import (
 	"os"
 	"time"
 
-	"github.com/go-pg/pg/v10"
+	"database/sql"
+
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
+	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/pgdialect"
+	_ "github.com/uptrace/bun/driver/pgdriver"
 )
 
 const logPath = "log.txt"
@@ -40,14 +44,20 @@ func setupLogger(verbose bool) {
 func main() {
 	flag.Parse()
 	setupLogger(os.Getenv("verbose") == "true")
+	logrus.Infoln("Starting.")
 
-	pgUrl, err := pg.ParseURL(os.Getenv("POSTGRES_URL"))
-	if err != nil {
-		logrus.WithError(err).Errorln("Invalid POSTGRES_URL environment variable.")
+	pgDsn := os.Getenv("POSTGRES_DSN")
+	if pgDsn == "" {
+		logrus.Errorln("Environment variable POSTGRES_DSN is not set!")
 		return
 	}
-	db := pg.Connect(pgUrl)
-	defer db.Close()
+	sqldb, err := sql.Open("pg", pgDsn)
+	if err != nil {
+		logrus.WithError(err).Errorln("Database open failed.")
+		return
+	}
+	defer sqldb.Close()
+	db := bun.NewDB(sqldb, pgdialect.New())
 
 	router := mux.NewRouter()
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -55,9 +65,10 @@ func main() {
 	})
 
 	versionRouter := router.PathPrefix("/version").Subrouter()
-	versionController := VersionController{Repo: &SqlVersionRepo{}}
-	versionRouter.HandleFunc("/version/latest", versionController.ServeList).Methods("GET")
+	versionController := VersionController{Repo: &PgVersionRepo{DB: db}}
+	versionRouter.HandleFunc("/latest", versionController.ServeList).Methods("GET")
 
+	logrus.Infoln("Listening...")
 	http.ListenAndServe("127.0.0.1:2137", router)
 	logrus.Exit(0)
 }

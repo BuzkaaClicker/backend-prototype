@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 
 	"github.com/sirupsen/logrus"
+	"github.com/uptrace/bun"
+	_ "github.com/uptrace/bun/driver/pgdriver"
 )
 
 type Version struct {
@@ -43,12 +44,12 @@ type VersionRepo interface {
 	LatestVersions(ctx context.Context) ([]Version, error)
 }
 
-type SqlVersionRepo struct {
-	db *sql.DB
+type PgVersionRepo struct {
+	DB *bun.DB
 }
 
-func (repo SqlVersionRepo) LatestVersions(ctx context.Context) ([]Version, error) {
-	rows, err := repo.db.QueryContext(ctx, `
+func (repo PgVersionRepo) LatestVersions(ctx context.Context) ([]Version, error) {
+	rows, err := repo.DB.QueryContext(ctx, `
 		SELECT number, os, architecture, branch from (
 			select
 				number,
@@ -65,14 +66,10 @@ func (repo SqlVersionRepo) LatestVersions(ctx context.Context) ([]Version, error
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}
-	versions := make([]Version, 0, 10)
-	for rows.Next() {
-		var version Version
-		err = rows.Scan(version.Number)
-		if err != nil {
-			return nil, fmt.Errorf("scan: %w", err)
-		}
-		versions = append(versions, version)
+	var versions []Version
+	err = repo.DB.ScanRows(ctx, rows, &versions)
+	if err != nil {
+		return nil, fmt.Errorf("scan rows: %w", err)
 	}
 	return versions, nil
 }

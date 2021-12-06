@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
 	"time"
 
 	"database/sql"
@@ -48,24 +50,16 @@ func logHandler(next http.Handler) http.Handler {
 	})
 }
 
-func main() {
-	flag.Parse()
-	setupLogger(os.Getenv("verbose") == "true")
-	logrus.Infoln("Starting.")
-
-	pgDsn := os.Getenv("POSTGRES_DSN")
-	if pgDsn == "" {
-		logrus.Errorln("Environment variable POSTGRES_DSN is not set!")
-		return
-	}
+func openDb(pgDsn string) *bun.DB {
 	sqldb, err := sql.Open("pg", pgDsn)
 	if err != nil {
 		logrus.WithError(err).Errorln("Database open failed.")
-		return
 	}
 	defer sqldb.Close()
-	db := bun.NewDB(sqldb, pgdialect.New())
+	return bun.NewDB(sqldb, pgdialect.New())
+}
 
+func createHttpHandler(db *bun.DB) http.Handler {
 	router := mux.NewRouter()
 	router.NotFoundHandler = router.NewRoute().BuildOnly().HandlerFunc(notFoundHandler).GetHandler()
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -76,7 +70,46 @@ func main() {
 	versionController := VersionController{Repo: &PgVersionRepo{DB: db}}
 	versionRouter.HandleFunc("/latest", versionController.ServeLatestVersions).Methods("GET")
 
-	logrus.Infoln("Listening...")
-	http.ListenAndServe("127.0.0.1:2137", logHandler(router))
+	return logHandler(router)
+}
+
+func awaitInterruption() {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+	<-c
+}
+
+func shutdown(ctx context.Context, server *http.Server) {
+	err := server.Shutdown(ctx)
+	if err != nil {
+		logrus.WithError(err).Warningln("Http server shutdown failed.")
+	}
 	logrus.Exit(0)
+}
+
+func main() {
+	flag.Parse()
+	setupLogger(os.Getenv("verbose") == "true")
+	logrus.Infoln("Starting backend.")
+
+	pgDsn := os.Getenv("POSTGRES_DSN")
+	if pgDsn == "" {
+		logrus.Errorln("Environment variable POSTGRES_DSN is not set!")
+	}
+
+	logrus.Infoln("Opening database.")
+	db := openDb(pgDsn)
+
+	logrus.Infoln("Creating http handler.")
+	h := createHttpHandler(db)
+	server := &http.Server{Addr: "127.0.0.1:2137", Handler: h}
+	go server.ListenAndServe()
+
+	logrus.Infoln("Starting listening... To shut down use ^C")
+
+	awaitInterruption()
+	logrus.Infoln("Shutting down...")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	shutdown(ctx, server)
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 	_ "github.com/uptrace/bun/driver/pgdriver"
+	"github.com/uptrace/bun/extra/bundebug"
 )
 
 const logPath = "log.txt"
@@ -55,7 +56,6 @@ func openDb(pgDsn string) *bun.DB {
 	if err != nil {
 		logrus.WithError(err).Errorln("Database open failed.")
 	}
-	defer sqldb.Close()
 	return bun.NewDB(sqldb, pgdialect.New())
 }
 
@@ -79,18 +79,12 @@ func awaitInterruption() {
 	<-c
 }
 
-func shutdown(ctx context.Context, server *http.Server) {
-	err := server.Shutdown(ctx)
-	if err != nil {
-		logrus.WithError(err).Warningln("Http server shutdown failed.")
-	}
-	logrus.Exit(0)
-}
-
 func main() {
 	flag.Parse()
-	setupLogger(os.Getenv("verbose") == "true")
+	verbose := os.Getenv("VERBOSE") == "true"
+	setupLogger(verbose)
 	logrus.Infoln("Starting backend.")
+	defer logrus.Exit(0)
 
 	pgDsn := os.Getenv("POSTGRES_DSN")
 	if pgDsn == "" {
@@ -99,6 +93,11 @@ func main() {
 
 	logrus.Infoln("Opening database.")
 	db := openDb(pgDsn)
+	if verbose {
+		db.AddQueryHook(bundebug.NewQueryHook(bundebug.WithVerbose(true)))
+	}
+	defer db.DB.Close()
+	defer db.Close()
 
 	logrus.Infoln("Creating http handler.")
 	h := createHttpHandler(db)
@@ -111,5 +110,8 @@ func main() {
 	logrus.Infoln("Shutting down...")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	shutdown(ctx, server)
+	err := server.Shutdown(ctx)
+	if err != nil {
+		logrus.WithError(err).Warningln("Http server shutdown failed.")
+	}
 }

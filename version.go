@@ -2,20 +2,28 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/uptrace/bun"
 	_ "github.com/uptrace/bun/driver/pgdriver"
 )
 
+// Version model representing database entity and rest json DTO.
 type Version struct {
-	Number       int    `json:"number"`
-	OS           string `json:"os"`
-	Architecture string `json:"architecture"`
-	Branch       string `json:"branch"`
+	bun.BaseModel `bun:"table:version"`
+
+	Id           int          `bun:",pk,autoincrement"                  json:"id"`
+	CreatedAt    time.Time    `bun:",notnull,default:current_timestamp" json:"-"`
+	DestroyedAt  sql.NullTime `bun:",soft_delete"                       json:"-"`
+	Number       int          `bun:",notnull,unique:build_type"         json:"number"`
+	OS           string       `bun:",notnull,unique:build_type"         json:"os"`
+	Architecture string       `bun:",notnull,unique:build_type"         json:"architecture"`
+	Branch       string       `bun:",notnull,unique:build_type"         json:"branch"`
 }
 
 type VersionController struct {
@@ -49,27 +57,19 @@ type PgVersionRepo struct {
 }
 
 func (repo PgVersionRepo) LatestVersions(ctx context.Context) ([]Version, error) {
-	rows, err := repo.DB.QueryContext(ctx, `
-		SELECT number, os, architecture, branch from (
-			select
-				number,
-				os,
-				architecture,
-				branch,
-				row_number() over(partition by os, architecture, branch order by created_at desc) as row_number
-			from
-				version
-			where
-				destroyed_at is null
-		) as latest where latest.row_number = 1
-	`)
+	subq := repo.DB.NewSelect().
+		ColumnExpr("*").
+		ColumnExpr("row_number() over(partition by os, architecture, branch order by id desc) as _row_number").
+		Table("version")
+
+	var versions []Version
+	err := repo.DB.NewSelect().
+		TableExpr("(?) as t", subq).
+		Where("t._row_number = 1").
+		ColumnExpr("*").
+		Scan(ctx, &versions)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
-	}
-	var versions []Version
-	err = repo.DB.ScanRows(ctx, rows, &versions)
-	if err != nil {
-		return nil, fmt.Errorf("scan rows: %w", err)
 	}
 	return versions, nil
 }

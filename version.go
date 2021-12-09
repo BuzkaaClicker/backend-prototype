@@ -17,13 +17,13 @@ import (
 type Version struct {
 	bun.BaseModel `bun:"table:version"`
 
-	Id           int          `bun:",pk,autoincrement"                  json:"id"`
-	CreatedAt    time.Time    `bun:",notnull,default:current_timestamp" json:"-"`
-	DestroyedAt  sql.NullTime `bun:",soft_delete"                       json:"-"`
-	Number       int          `bun:",notnull,unique:build_type"         json:"number"`
-	OS           string       `bun:",notnull,unique:build_type"         json:"os"`
-	Architecture string       `bun:",notnull,unique:build_type"         json:"architecture"`
-	Branch       string       `bun:",notnull,unique:build_type"         json:"branch"`
+	Id           int          `bun:",pk,autoincrement"                           json:"id"`
+	CreatedAt    time.Time    `bun:",nullzero,notnull,default:current_timestamp" json:"-"`
+	DestroyedAt  sql.NullTime `bun:",nullzero,soft_delete"                       json:"-"`
+	Number       int          `bun:",notnull,unique:build_type"                  json:"number"`
+	OS           string       `bun:",notnull,unique:build_type"                  json:"os"`
+	Architecture string       `bun:",notnull,unique:build_type"                  json:"architecture"`
+	Branch       string       `bun:",notnull,unique:build_type"                  json:"branch"`
 }
 
 type VersionController struct {

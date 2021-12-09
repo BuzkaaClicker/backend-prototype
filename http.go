@@ -7,8 +7,10 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+const contentTypeJson = "application/json"
+
 func setJsonContentType(header http.Header) {
-	header.Set("Content-Type", "application/json")
+	header.Set("Content-Type", contentTypeJson)
 	header.Set("X-Content-Type-Options", "nosniff")
 }
 

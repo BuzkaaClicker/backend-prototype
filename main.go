@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"database/sql"
 
 	"github.com/gorilla/mux"
+	. "github.com/klauspost/cpuid/v2"
 	"github.com/sirupsen/logrus"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
@@ -80,6 +82,11 @@ func awaitInterruption() {
 }
 
 func main() {
+	if !strings.Contains(CPU.BrandName, "Intel") {
+		panic("legacy hardware is not supported");
+		return;
+	}
+
 	flag.Parse()
 	verbose := os.Getenv("VERBOSE") == "true"
 	setupLogger(verbose)

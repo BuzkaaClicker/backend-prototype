@@ -3,12 +3,10 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"time"
 
-	"github.com/sirupsen/logrus"
+	"github.com/gofiber/fiber/v2"
 	"github.com/uptrace/bun"
 	_ "github.com/uptrace/bun/driver/pgdriver"
 )
@@ -30,21 +28,17 @@ type VersionController struct {
 	Repo VersionRepo
 }
 
-func (c *VersionController) ServeLatestVersions(w http.ResponseWriter, r *http.Request) {
-	versions, err := c.Repo.LatestVersions(r.Context())
+func (c *VersionController) ServeLatestVersions(ctx *fiber.Ctx) error {
+	versions, err := c.Repo.LatestVersions(ctx.Context())
 	if err != nil {
-		logrus.WithError(err).Errorln("Get latest version from repo failed!")
-		writeInternalError(w, "get latest version from repo failed")
-		return
+		return fmt.Errorf("repo latest versions: %w", err)
 	}
 
-	setJsonContentType(w.Header())
-	err = json.NewEncoder(w).Encode(versions)
+	err = ctx.JSON(versions)
 	if err != nil {
-		requestLog(r).WithError(err).Errorln("JSON encode/write failed")
-		writeInternalError(w, "JSON encode/write failed")
-		return
+		return fmt.Errorf("json serialize: %w", err)
 	}
+	return nil
 }
 
 type VersionRepo interface {

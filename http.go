@@ -1,43 +1,37 @@
 package main
 
 import (
-	"encoding/json"
-	"net/http"
-
+	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 )
-
-const contentTypeJson = "application/json"
-
-func setJsonContentType(header http.Header) {
-	header.Set("Content-Type", contentTypeJson)
-	header.Set("X-Content-Type-Options", "nosniff")
-}
 
 type ErrorResponse struct {
 	ErrorMessage string `json:"error_message"`
 }
 
-func writeError(w http.ResponseWriter, statusCode int, errorMessage string) error {
-	setJsonContentType(w.Header())
-	w.WriteHeader(statusCode)
-	return json.NewEncoder(w).Encode(&ErrorResponse{ErrorMessage: errorMessage})
-}
-
-// Write http internal error status code and error message wrapped in json
-func writeInternalError(w http.ResponseWriter, errorMessage string) error {
-	return writeError(w, http.StatusInternalServerError, errorMessage)
-}
-
-func requestLog(r *http.Request) *logrus.Entry {
+func requestLog(ctx *fiber.Ctx) *logrus.Entry {
 	return logrus.
-		WithField("remote_addr", r.RemoteAddr).
-		WithField("url", r.URL).
-		WithField("z_referer", r.Header.Get("Referer")).
-		WithField("z_user_agent", r.Header.Get("User-Agent")).
-		WithField("z_x_forwared_for", r.Header.Get("X-Forwarded-For"))
+		WithField("remote_addr", ctx.Context().RemoteAddr()).
+		WithField("path", ctx.Path()).
+		WithField("z_referer", string(ctx.Request().Header.Peek("Referer"))).
+		WithField("z_user_agent", string(ctx.Request().Header.Peek("User-Agent"))).
+		WithField("z_x_forwared_for", string(ctx.Request().Header.Peek("X-Forwarded-For")))
 }
 
-func notFoundHandler(w http.ResponseWriter, r *http.Request) {
-	_ = writeError(w, http.StatusNotFound, "not found")
+func restErrorHandler(ctx *fiber.Ctx, err error) error {
+	if fe, ok := err.(*fiber.Error); ok {
+		return ctx.
+			Status(fe.Code).
+			JSON(&ErrorResponse{ErrorMessage: fe.Message})
+	} else {
+		requestLog(ctx).WithError(err).Errorln("Internal server error while handling request.")
+		// keep internal server errors private. reply with generic error message.
+		return ctx.
+			Status(fiber.ErrInternalServerError.Code).
+			JSON(&ErrorResponse{ErrorMessage: fiber.ErrInternalServerError.Message})
+	}
+}
+
+func notFoundHandler(c *fiber.Ctx) error {
+	return fiber.NewError(fiber.StatusNotFound)
 }

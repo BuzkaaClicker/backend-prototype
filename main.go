@@ -41,6 +41,10 @@ func openDb(pgDsn string) *bun.DB {
 	if err != nil {
 		logrus.WithError(err).Fatalln("Database open failed.")
 	}
+	err = sqldb.Ping()
+	if err != nil {
+		logrus.WithError(err).Fatalln("Could not ping database.")
+	}
 	return bun.NewDB(sqldb, pgdialect.New())
 }
 

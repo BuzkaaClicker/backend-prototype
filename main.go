@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log/syslog"
 	"os"
@@ -55,7 +56,7 @@ func logHandler() fiber.Handler {
 	}
 }
 
-func createFiber(db *bun.DB) *fiber.App {
+func createApp(ctx context.Context, db *bun.DB) *fiber.App {
 	app := fiber.New(fiber.Config{
 		ReadTimeout:      5 * time.Second,
 		WriteTimeout:     5 * time.Second,
@@ -67,9 +68,13 @@ func createFiber(db *bun.DB) *fiber.App {
 	app.Use(logHandler())
 	app.Get("/status", monitor.New())
 
-	versionRouter := app.Group("/version")
-	versionController := VersionController{Repo: &PgVersionRepo{DB: db}}
-	versionRouter.Get("/latest", versionController.ServeLatestVersions)
+	programRepo := &PgProgramRepo{DB: db}
+	if err := programRepo.PrepareDb(ctx); err != nil {
+		logrus.WithError(err).Fatalln("Could not prepare program repo db.")
+	}
+
+	programController := ProgramController{Repo: programRepo}
+	app.Get("/download/:file_type", programController.Download)
 
 	app.Use(notFoundHandler)
 	return app
@@ -102,7 +107,7 @@ func main() {
 	defer db.Close()
 
 	logrus.Infoln("Creating fiber app.")
-	fiberApp := createFiber(db)
+	fiberApp := createApp(context.Background(), db)
 	go fiberApp.Listen("127.0.0.1:2137")
 
 	logrus.Infoln("Starting listening... To shut down use ^C")

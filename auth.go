@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	crand "crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"time"
@@ -63,4 +65,18 @@ func (c *AuthController) authenticateDiscord(ctx *fiber.Ctx, code string) error 
 	}
 	ctx.Status(fiber.StatusCreated).JSON("eee")
 	return nil
+}
+
+func generateSessionToken() (string, error) {
+	const tokenBytes = 60
+	rawToken := make([]byte, tokenBytes)
+	// crypto/rand - getentropy(2)
+	bytesRead, err := crand.Read(rawToken)
+	if err != nil {
+		return "", fmt.Errorf("rand read: %w", err)
+	}
+	if bytesRead != tokenBytes {
+		return "", fmt.Errorf("bytes read %d / required %d", bytesRead, tokenBytes)
+	}
+	return base64.StdEncoding.EncodeToString(rawToken), nil
 }

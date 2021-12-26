@@ -131,3 +131,11 @@ func TestAuthCreateUser(t *testing.T) {
 		tc.Validate(resp, body)
 	}
 }
+
+func TestGenerateSessionTokenLength(t *testing.T) {
+	assert := assert.New(t)
+
+	token, err := generateSessionToken()
+	assert.NoError(err)
+	assert.True(len(token) > 20)
+}

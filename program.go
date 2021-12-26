@@ -26,7 +26,7 @@ type ProgramFile struct {
 
 // Program model representing database entity and rest json DTO.
 type Program struct {
-	bun.BaseModel `bun:"table:program"`
+	bun.BaseModel `bun:"table:program" json:"-"`
 
 	Id          int           `bun:",pk,autoincrement"                            json:"id"`
 	CreatedAt   time.Time     `bun:",nullzero,notnull,default:current_timestamp"  json:"-"`
@@ -73,11 +73,6 @@ type ProgramRepo interface {
 
 type PgProgramRepo struct {
 	DB *bun.DB
-}
-
-func (repo PgProgramRepo) PrepareDb(ctx context.Context) error {
-	_, err := repo.DB.NewCreateTable().IfNotExists().Model((*Program)(nil)).Exec(ctx)
-	return err
 }
 
 func (repo PgProgramRepo) LatestProgramFiles(ctx context.Context, fileType string,

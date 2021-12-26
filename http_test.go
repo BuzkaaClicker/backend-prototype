@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io/ioutil"
 	"net/http/httptest"
 	"testing"
@@ -8,6 +9,14 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
+
+func fakeHttpErrorResponse(message string) string {
+	bytes, err := json.Marshal(ErrorResponse{ErrorMessage: message})
+	if err != nil {
+		panic(err)
+	}
+	return string(bytes)
+}
 
 func TestNotFoundHandler(t *testing.T) {
 	assert := assert.New(t)
@@ -26,7 +35,7 @@ func TestNotFoundHandler(t *testing.T) {
 		returnBody string
 	}{
 		{path: "/unknown_path", returnCode: fiber.StatusNotFound,
-			returnBody: `{"error_message":"Not Found"}`},
+			returnBody: fakeHttpErrorResponse("Not Found")},
 		{path: "/home", returnCode: fiber.StatusOK,
 			returnBody: `{"im":"working"}`},
 	}

@@ -6,10 +6,12 @@ import (
 	"log/syslog"
 	"os"
 	"os/signal"
+	"reflect"
 	"time"
 
 	"database/sql"
 
+	"github.com/buzkaaclicker/backend/discord"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/monitor"
 	"github.com/sirupsen/logrus"
@@ -37,7 +39,7 @@ func setupLogger(verbose bool) {
 	logrus.AddHook(syslogHook)
 }
 
-func openDb(pgDsn string) *bun.DB {
+func openDb(ctx context.Context, pgDsn string) *bun.DB {
 	sqldb, err := sql.Open("pg", pgDsn)
 	if err != nil {
 		logrus.WithError(err).Fatalln("Database open failed.")
@@ -46,7 +48,21 @@ func openDb(pgDsn string) *bun.DB {
 	if err != nil {
 		logrus.WithError(err).Fatalln("Could not ping database.")
 	}
-	return bun.NewDB(sqldb, pgdialect.New())
+	db := bun.NewDB(sqldb, pgdialect.New())
+
+	models := []interface{}{
+		(*User)(nil),
+		(*Program)(nil),
+	}
+	for _, model := range models {
+		modelType := reflect.TypeOf(model)
+		logrus.WithField("model", modelType).Debugln("Creating table.")
+		_, err = db.NewCreateTable().IfNotExists().Model(model).Exec(ctx)
+		if err != nil {
+			logrus.WithField("model", modelType).WithError(err).Fatalln("Could not create table.")
+		}
+	}
+	return db
 }
 
 func logHandler() fiber.Handler {
@@ -56,11 +72,32 @@ func logHandler() fiber.Handler {
 	}
 }
 
+func authController(db *bun.DB) AuthController {
+	discordClientId := os.Getenv("DISCORD_CLIENT_ID")
+	if discordClientId == "" {
+		logrus.Fatalln("DISCORD_CLIENT_ID not set!")
+	}
+	discordClientSecret := os.Getenv("DISCORD_CLIENT_SECRET")
+	if discordClientId == "" {
+		logrus.Fatalln("DISCORD_CLIENT_SECRET not set!")
+	}
+	discordRedirectUri := os.Getenv("DISCORD_AUTH_URI")
+	if discordRedirectUri == "" {
+		logrus.Fatalln("DISCORD_AUTH_URI not set!")
+	}
+	
+	return AuthController{
+		DB: db,
+		OAuthUrlFactory: discord.RestOAuthUrlFactory(discordClientId, discordRedirectUri),
+		AccessTokenExchange: discord.RestAccessTokenExchanger(discordClientId, discordClientSecret, discordRedirectUri),
+		UserMeProvider: discord.RestUserMeProvider,
+	}
+}
+
 func createApp(ctx context.Context, db *bun.DB) *fiber.App {
 	app := fiber.New(fiber.Config{
 		ReadTimeout:      5 * time.Second,
 		WriteTimeout:     5 * time.Second,
-		DisableKeepalive: true,
 		ErrorHandler:     restErrorHandler,
 	})
 	app.Server().MaxConnsPerIP = 4
@@ -68,11 +105,10 @@ func createApp(ctx context.Context, db *bun.DB) *fiber.App {
 	app.Use(logHandler())
 	app.Get("/status", monitor.New())
 
-	programRepo := &PgProgramRepo{DB: db}
-	if err := programRepo.PrepareDb(ctx); err != nil {
-		logrus.WithError(err).Fatalln("Could not prepare program repo db.")
-	}
+	authController := authController(db)
+	app.Get("/auth/discord", authController.LoginDiscord)
 
+	programRepo := &PgProgramRepo{DB: db}
 	programController := ProgramController{Repo: programRepo}
 	app.Get("/download/:file_type", programController.Download)
 
@@ -91,7 +127,6 @@ func main() {
 	verbose := os.Getenv("VERBOSE") == "true"
 	setupLogger(verbose)
 	logrus.Infoln("Starting backend.")
-	defer logrus.Exit(0)
 
 	pgDsn := os.Getenv("POSTGRES_DSN")
 	if pgDsn == "" {
@@ -99,7 +134,7 @@ func main() {
 	}
 
 	logrus.Infoln("Opening database.")
-	db := openDb(pgDsn)
+	db := openDb(context.Background(), pgDsn)
 	if verbose {
 		db.AddQueryHook(bundebug.NewQueryHook(bundebug.WithVerbose(true)))
 	}
@@ -118,4 +153,5 @@ func main() {
 	if err != nil {
 		logrus.WithError(err).Warningln("Fiber shutdown failed.")
 	}
+	logrus.Exit(0)
 }

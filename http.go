@@ -24,7 +24,7 @@ func restErrorHandler(ctx *fiber.Ctx, err error) error {
 			Status(fe.Code).
 			JSON(&ErrorResponse{ErrorMessage: fe.Message})
 	} else {
-		requestLog(ctx).WithError(err).Errorln("Internal server error while handling request.")
+		requestLog(ctx).WithError(err).Errorln("Internal server error.")
 		// keep internal server errors private. reply with generic error message.
 		return ctx.
 			Status(fiber.ErrInternalServerError.Code).

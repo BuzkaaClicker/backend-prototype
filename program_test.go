@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestVersionLatest(t *testing.T) {
+func TestDownloadProgram(t *testing.T) {
 	if testing.Short() {
 		t.SkipNow()
 		return

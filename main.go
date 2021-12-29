@@ -16,6 +16,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/monitor"
 	"github.com/sirupsen/logrus"
 	logrusys "github.com/sirupsen/logrus/hooks/syslog"
+	"github.com/tidwall/buntdb"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 	_ "github.com/uptrace/bun/driver/pgdriver"
@@ -72,7 +73,7 @@ func logHandler() fiber.Handler {
 	}
 }
 
-func authController(db *bun.DB) AuthController {
+func authController(db *bun.DB, sessionStore *SessionStore) AuthController {
 	discordClientId := os.Getenv("DISCORD_CLIENT_ID")
 	if discordClientId == "" {
 		logrus.Fatalln("DISCORD_CLIENT_ID not set!")
@@ -85,27 +86,29 @@ func authController(db *bun.DB) AuthController {
 	if discordRedirectUri == "" {
 		logrus.Fatalln("DISCORD_AUTH_URI not set!")
 	}
-	
+
 	return AuthController{
-		DB: db,
-		OAuthUrlFactory: discord.RestOAuthUrlFactory(discordClientId, discordRedirectUri),
+		DB:                  db,
+		OAuthUrlFactory:     discord.RestOAuthUrlFactory(discordClientId, discordRedirectUri),
 		AccessTokenExchange: discord.RestAccessTokenExchanger(discordClientId, discordClientSecret, discordRedirectUri),
-		UserMeProvider: discord.RestUserMeProvider,
+		UserMeProvider:      discord.RestUserMeProvider,
+		SessionStore:        sessionStore,
 	}
 }
 
-func createApp(ctx context.Context, db *bun.DB) *fiber.App {
+func createApp(ctx context.Context, bdb *buntdb.DB, db *bun.DB) *fiber.App {
 	app := fiber.New(fiber.Config{
-		ReadTimeout:      5 * time.Second,
-		WriteTimeout:     5 * time.Second,
-		ErrorHandler:     restErrorHandler,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+		ErrorHandler: restErrorHandler,
 	})
 	app.Server().MaxConnsPerIP = 4
 
 	app.Use(logHandler())
 	app.Get("/status", monitor.New())
 
-	authController := authController(db)
+	sessionStore := &SessionStore{Buntdb: bdb}
+	authController := authController(db, sessionStore)
 	app.Get("/auth/discord", authController.LoginDiscord)
 
 	programRepo := &PgProgramRepo{DB: db}
@@ -133,6 +136,12 @@ func main() {
 		logrus.Fatalln("Environment variable POSTGRES_DSN is not set!")
 	}
 
+	bdb, err := buntdb.Open("kv.db")
+	if err != nil {
+		logrus.WithError(err).Fatalln("Could not open buntdb.")
+	}
+	defer bdb.Close()
+
 	logrus.Infoln("Opening database.")
 	db := openDb(context.Background(), pgDsn)
 	if verbose {
@@ -142,14 +151,14 @@ func main() {
 	defer db.Close()
 
 	logrus.Infoln("Creating fiber app.")
-	fiberApp := createApp(context.Background(), db)
+	fiberApp := createApp(context.Background(), bdb, db)
 	go fiberApp.Listen("127.0.0.1:2137")
 
 	logrus.Infoln("Starting listening... To shut down use ^C")
 
 	awaitInterruption()
 	logrus.Infoln("Shutting down...")
-	err := fiberApp.Shutdown()
+	err = fiberApp.Shutdown()
 	if err != nil {
 		logrus.WithError(err).Warningln("Fiber shutdown failed.")
 	}

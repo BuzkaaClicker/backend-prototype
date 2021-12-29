@@ -12,15 +12,23 @@ import (
 	"github.com/ory/dockertest"
 	"github.com/ory/dockertest/docker"
 	"github.com/sirupsen/logrus"
+	"github.com/tidwall/buntdb"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/extra/bundebug"
 )
 
 var db *bun.DB
+var bdb *buntdb.DB
 
 func TestMain(m *testing.M) {
 	flag.Parse()
+
+	var err error
+	bdb, err = buntdb.Open(":memory:")
+	if err != nil {
+		panic(err)
+	}
 
 	var shutdownDb func()
 	if !testing.Short() {

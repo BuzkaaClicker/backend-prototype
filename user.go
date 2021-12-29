@@ -10,7 +10,7 @@ import (
 type User struct {
 	bun.BaseModel `bun:"table:user"`
 
-	Id                  int32     `bun:",pk,autoincrement" json:"-"`
+	Id                  int64     `bun:",pk,autoincrement" json:"-"`
 	CreatedAt           time.Time `bun:",nullzero,notnull,default:current_timestamp" json:"-"`
 	RolesNames          []string  `bun:",notnull,array" json:"-"`
 	DiscordId           string    `bun:",notnull,unique" json:"-"`

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
@@ -113,6 +114,7 @@ func TestAuthCreateUser(t *testing.T) {
 			AccessTokenExchange: func(code string) (discord.AccessTokenResponse, error) {
 				return tc.AccessTokenResponse, tc.AccessTokenExchangeErr
 			},
+			SessionStore: &SessionStore{Buntdb: bdb},
 		}
 
 		app := fiber.New(fiber.Config{
@@ -138,4 +140,60 @@ func TestGenerateSessionTokenLength(t *testing.T) {
 	token, err := generateSessionToken()
 	assert.NoError(err)
 	assert.True(len(token) > 20)
+}
+
+func Test_SessionAuthorization(t *testing.T) {
+	assert := assert.New(t)
+
+	sessionStore := &SessionStore{Buntdb: bdb}
+	session, err := sessionStore.RegisterNew(21)
+	assert.NoError(err)
+
+	assert.NotNil(session)
+	app := fiber.New()
+	app.Get("/restricted", sessionStore.Authorize(func(c *fiber.Ctx) error {
+		session := c.Locals(SessionKey).(*Session)
+		_, err := fmt.Fprintf(c, "Authorized. User id: %d", session.UserId)
+		return err
+	}))
+
+	cases := []struct {
+		token            string
+		tokenType        string
+		expectedResponse string
+	}{
+		{
+			token:            session.Token,
+			tokenType:        "Bearer",
+			expectedResponse: "Authorized. User id: 21",
+		},
+		{
+			token:            "",
+			expectedResponse: "invalid auth type",
+		},
+		{
+			token:            "unexisting_session_token",
+			tokenType:        "Bearer",
+			expectedResponse: "Unauthorized",
+		},
+		{
+			token:            "basic_is_not_a_valid_auth_type",
+			tokenType:        "Basic",
+			expectedResponse: "invalid auth type",
+		},
+	}
+
+	for _, tc := range cases {
+		req := httptest.NewRequest("GET", "/restricted", nil)
+		if tc.token != "" {
+			req.Header.Set("Authorization", tc.tokenType+" "+tc.token)
+		}
+		resp, err := app.Test(req)
+		assert.NoError(err)
+		defer resp.Body.Close()
+
+		body, err := ioutil.ReadAll(resp.Body)
+		assert.NoError(err)
+		assert.Equal(tc.expectedResponse, string(body))
+	}
 }

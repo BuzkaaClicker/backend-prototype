@@ -45,6 +45,14 @@ require (
 	github.com/klauspost/compress v1.13.6 // indirect
 	github.com/lib/pq v0.0.0-20180327071824-d34b9ff171c2 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/tidwall/btree v1.1.0 // indirect
+	github.com/tidwall/buntdb v1.2.9 // indirect
+	github.com/tidwall/gjson v1.12.1 // indirect
+	github.com/tidwall/grect v0.1.4 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.0 // indirect
+	github.com/tidwall/rtred v0.1.2 // indirect
+	github.com/tidwall/tinyqueue v0.1.1 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.31.0 // indirect
 	github.com/valyala/tcplisten v1.0.0 // indirect

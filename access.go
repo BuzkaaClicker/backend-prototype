@@ -1,5 +1,9 @@
 package main
 
+import (
+	"github.com/gofiber/fiber/v2"
+)
+
 type Access byte
 
 const (
@@ -67,4 +71,17 @@ func (roles Roles) Access(permission PermissionName) Access {
 		access = access.merge(role.Access(permission))
 	}
 	return access
+}
+
+func RequirePermissions(permission PermissionName) fiber.Handler {
+	return func(ctx *fiber.Ctx) error {
+		user, ok := ctx.Locals(UserKey).(*User)
+		if !ok {
+			return fiber.ErrUnauthorized
+		}
+		if user.Roles.Access(permission) != AccessAllowed {
+			return fiber.ErrUnauthorized
+		}
+		return nil
+	}
 }

@@ -2,10 +2,14 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"time"
 
+	"github.com/buzkaaclicker/backend/discord"
 	"github.com/uptrace/bun"
 )
+
+const UserKey = "user"
 
 type User struct {
 	bun.BaseModel `bun:"table:user"`
@@ -32,4 +36,40 @@ func (u *User) AfterScanRow(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+type UserStore struct {
+	DB *bun.DB
+}
+
+func (s *UserStore) RegisterDiscordUser(ctx context.Context,
+	dcUser discord.User, refreshToken string) (*User, error) {
+	user := &User{
+		DiscordId:           dcUser.Id,
+		DiscordRefreshToken: refreshToken,
+		Email:               dcUser.Email,
+		RolesNames:          []string{},
+	}
+
+	_, err := s.DB.NewInsert().
+		Model(user).
+		On(`CONFLICT (discord_id) DO UPDATE SET email=EXCLUDED.email, ` +
+			`discord_refresh_token=EXCLUDED.discord_refresh_token`).
+		Exec(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("insert user: %w", err)
+	}
+	return user, nil
+}
+
+func (s *UserStore) ById(ctx context.Context, userId int64) (*User, error) {
+	user := new(User)
+	err := s.DB.NewSelect().
+		Model(user).
+		Where("id=?", userId).
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("select user: %w", err)
+	}
+	return user, nil
 }

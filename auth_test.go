@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/buzkaaclicker/backend/discord"
@@ -115,6 +116,7 @@ func TestAuthCreateUser(t *testing.T) {
 				return tc.AccessTokenResponse, tc.AccessTokenExchangeErr
 			},
 			SessionStore: &SessionStore{Buntdb: bdb},
+			UserStore: &UserStore{DB: db},
 		}
 
 		app := fiber.New(fiber.Config{
@@ -145,17 +147,24 @@ func TestGenerateSessionTokenLength(t *testing.T) {
 func Test_SessionAuthorization(t *testing.T) {
 	assert := assert.New(t)
 
-	sessionStore := &SessionStore{Buntdb: bdb}
-	session, err := sessionStore.RegisterNew(21)
+	userStore := &UserStore{DB: db}
+	user, err := userStore.RegisterDiscordUser(context.Background(), discord.User{Username: "makin", Email: "makin"}, "empty")
+	assert.NoError(err)
+
+	sessionStore := &SessionStore{Buntdb: bdb, UserStore: userStore}
+	session, err := sessionStore.RegisterNew(user.Id)
 	assert.NoError(err)
 
 	assert.NotNil(session)
 	app := fiber.New()
-	app.Get("/restricted", sessionStore.Authorize(func(c *fiber.Ctx) error {
-		session := c.Locals(SessionKey).(*Session)
-		_, err := fmt.Fprintf(c, "Authorized. User id: %d", session.UserId)
+
+	restrictedHandler := func(ctx *fiber.Ctx) error {
+		session := ctx.Locals(SessionKey).(*Session)
+		_, err := fmt.Fprintf(ctx, "Authorized. User id: %d", session.UserId)
 		return err
-	}))
+	}
+
+	app.Get("/restricted", combineHandlers(sessionStore.Authorize, restrictedHandler))
 
 	cases := []struct {
 		token            string
@@ -165,11 +174,11 @@ func Test_SessionAuthorization(t *testing.T) {
 		{
 			token:            session.Token,
 			tokenType:        "Bearer",
-			expectedResponse: "Authorized. User id: 21",
+			expectedResponse: "Authorized. User id: " + strconv.Itoa(int(user.Id)),
 		},
 		{
 			token:            "",
-			expectedResponse: "invalid auth type",
+			expectedResponse: "Unauthorized",
 		},
 		{
 			token:            "unexisting_session_token",
@@ -194,6 +203,6 @@ func Test_SessionAuthorization(t *testing.T) {
 
 		body, err := ioutil.ReadAll(resp.Body)
 		assert.NoError(err)
-		assert.Equal(tc.expectedResponse, string(body))
+		assert.Equal(tc.expectedResponse, string(body), tc)
 	}
 }

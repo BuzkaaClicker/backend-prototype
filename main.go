@@ -73,30 +73,29 @@ func logHandler() fiber.Handler {
 	}
 }
 
-func authController(db *bun.DB, sessionStore *SessionStore) AuthController {
-	discordClientId := os.Getenv("DISCORD_CLIENT_ID")
-	if discordClientId == "" {
-		logrus.Fatalln("DISCORD_CLIENT_ID not set!")
-	}
-	discordClientSecret := os.Getenv("DISCORD_CLIENT_SECRET")
-	if discordClientId == "" {
-		logrus.Fatalln("DISCORD_CLIENT_SECRET not set!")
-	}
-	discordRedirectUri := os.Getenv("DISCORD_AUTH_URI")
-	if discordRedirectUri == "" {
-		logrus.Fatalln("DISCORD_AUTH_URI not set!")
-	}
-
-	return AuthController{
-		DB:                  db,
-		OAuthUrlFactory:     discord.RestOAuthUrlFactory(discordClientId, discordRedirectUri),
-		AccessTokenExchange: discord.RestAccessTokenExchanger(discordClientId, discordClientSecret, discordRedirectUri),
-		UserMeProvider:      discord.RestUserMeProvider,
-		SessionStore:        sessionStore,
-	}
+type discordConfig struct {
+	clientId     string
+	clientSecret string
+	redirectId   string
 }
 
-func createApp(ctx context.Context, bdb *buntdb.DB, db *bun.DB) *fiber.App {
+func discordConfigFromEnv() discordConfig {
+	clientId := os.Getenv("DISCORD_CLIENT_ID")
+	if clientId == "" {
+		logrus.Fatalln("DISCORD_CLIENT_ID not set!")
+	}
+	clientSecret := os.Getenv("DISCORD_CLIENT_SECRET")
+	if clientSecret == "" {
+		logrus.Fatalln("DISCORD_CLIENT_SECRET not set!")
+	}
+	redirectUri := os.Getenv("DISCORD_AUTH_URI")
+	if redirectUri == "" {
+		logrus.Fatalln("DISCORD_AUTH_URI not set!")
+	}
+	return discordConfig{clientId, clientSecret, redirectUri}
+}
+
+func createApp(ctx context.Context, bdb *buntdb.DB, db *bun.DB, discordConfig discordConfig) *fiber.App {
 	app := fiber.New(fiber.Config{
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 5 * time.Second,
@@ -104,11 +103,22 @@ func createApp(ctx context.Context, bdb *buntdb.DB, db *bun.DB) *fiber.App {
 	})
 	app.Server().MaxConnsPerIP = 4
 
-	app.Use(logHandler())
-	app.Get("/status", monitor.New())
+	userStore := &UserStore{DB: db}
+	sessionStore := &SessionStore{Buntdb: bdb, UserStore: userStore}
+	authController := AuthController{
+		DB:              db,
+		OAuthUrlFactory: discord.RestOAuthUrlFactory(discordConfig.clientId, discordConfig.redirectId),
+		AccessTokenExchange: discord.RestAccessTokenExchanger(discordConfig.clientId,
+			discordConfig.clientSecret, discordConfig.redirectId),
+		UserMeProvider: discord.RestUserMeProvider,
+		SessionStore:   sessionStore,
+		UserStore:      userStore,
+	}
 
-	sessionStore := &SessionStore{Buntdb: bdb}
-	authController := authController(db, sessionStore)
+	app.Use(logHandler())
+	app.Get("/status", combineHandlers(
+		sessionStore.Authorize, RequirePermissions(PermissionAdminDashboard), monitor.New()))
+
 	app.Get("/auth/discord", authController.LoginDiscord)
 
 	programRepo := &PgProgramRepo{DB: db}
@@ -150,8 +160,10 @@ func main() {
 	defer db.DB.Close()
 	defer db.Close()
 
+	discordConfig := discordConfigFromEnv()
+
 	logrus.Infoln("Creating fiber app.")
-	fiberApp := createApp(context.Background(), bdb, db)
+	fiberApp := createApp(context.Background(), bdb, db, discordConfig)
 	go fiberApp.Listen("127.0.0.1:2137")
 
 	logrus.Infoln("Starting listening... To shut down use ^C")

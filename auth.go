@@ -26,7 +26,8 @@ type Session struct {
 }
 
 type SessionStore struct {
-	Buntdb *buntdb.DB
+	Buntdb    *buntdb.DB
+	UserStore *UserStore
 }
 
 func (s *SessionStore) RegisterNew(userId int64) (*Session, error) {
@@ -53,42 +54,49 @@ func (s *SessionStore) RegisterNew(userId int64) (*Session, error) {
 	return session, nil
 }
 
-func (s *SessionStore) Authorize(child fiber.Handler) fiber.Handler {
-	return func(ctx *fiber.Ctx) error {
-		auth := ctx.Get(fiber.HeaderAuthorization)
-		if !strings.HasPrefix(auth, "Bearer ") {
-			return fiber.NewError(fiber.ErrBadRequest.Code, "invalid auth type")
-		}
-		token := strings.TrimPrefix(auth, "Bearer ")
-
-		var userIdRaw string
-		err := s.Buntdb.View(func(tx *buntdb.Tx) error {
-			var err error
-			userIdRaw, err = tx.Get("session:" + token)
-			return err
-		})
-		if err != nil {
-			if err == buntdb.ErrNotFound {
-				return fiber.ErrUnauthorized
-			} else {
-				return fmt.Errorf("could not get session: %w", err)
-			}
-		}
-		userId, err := strconv.ParseInt(userIdRaw, 10, 0)
-		if err != nil {
-			return fmt.Errorf("user id raw parse: %w", err)
-		}
-		session := &Session{
-			UserId: userId,
-			Token:  token,
-		}
-
-		ctx.Locals("session", session)
-		requestLog(ctx).
-			WithField("user_id", userId).
-			Infoln("Authorized access.")
-		return child(ctx)
+func (s *SessionStore) Authorize(ctx *fiber.Ctx) error {
+	auth := ctx.Get(fiber.HeaderAuthorization)
+	if auth == "" {
+		return fiber.ErrUnauthorized
 	}
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return fiber.NewError(fiber.ErrBadRequest.Code, "invalid auth type")
+	}
+	token := strings.TrimPrefix(auth, "Bearer ")
+
+	var userIdRaw string
+	err := s.Buntdb.View(func(tx *buntdb.Tx) error {
+		var err error
+		userIdRaw, err = tx.Get("session:" + token)
+		return err
+	})
+	if err != nil {
+		if err == buntdb.ErrNotFound {
+			return fiber.ErrUnauthorized
+		} else {
+			return fmt.Errorf("could not get session: %w", err)
+		}
+	}
+	userId, err := strconv.ParseInt(userIdRaw, 10, 0)
+	if err != nil {
+		return fmt.Errorf("user id raw parse: %w", err)
+	}
+	session := &Session{
+		UserId: userId,
+		Token:  token,
+	}
+	user, err := s.UserStore.ById(ctx.Context(), session.UserId)
+	if err != nil {
+		return fmt.Errorf("retrieve user by id: %w", err)
+	}
+
+	requestLog(ctx).
+		WithField("user_id", userId).
+		Infoln("Authorized access.")
+
+	ctx.Locals(SessionKey, session)
+	ctx.Locals(UserKey, user)
+	return nil
 }
 
 type AuthController struct {
@@ -97,6 +105,7 @@ type AuthController struct {
 	AccessTokenExchange discord.AccessTokenExchange
 	UserMeProvider      discord.UserMeProvider
 	SessionStore        *SessionStore
+	UserStore           *UserStore
 }
 
 func (c *AuthController) LoginDiscord(ctx *fiber.Ctx) error {
@@ -128,20 +137,10 @@ func (c *AuthController) authenticateDiscord(ctx *fiber.Ctx, code string) error 
 	}
 
 	dbCtx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
-	user := &User{
-		DiscordId:           dcUser.Id,
-		DiscordRefreshToken: exchange.RefreshToken,
-		Email:               dcUser.Email,
-		RolesNames:          []string{},
-	}
-	_, err = c.DB.NewInsert().
-		Model(user).
-		On(`CONFLICT (discord_id) DO UPDATE SET email=EXCLUDED.email, ` +
-			`discord_refresh_token=EXCLUDED.discord_refresh_token`).
-		Exec(dbCtx)
+	user, err := c.UserStore.RegisterDiscordUser(dbCtx, dcUser, exchange.RefreshToken)
 	cancelFunc()
 	if err != nil {
-		return fmt.Errorf("user insert err: %w", err)
+		return fmt.Errorf("user register: %w", err)
 	}
 
 	session, err := c.SessionStore.RegisterNew(user.Id)

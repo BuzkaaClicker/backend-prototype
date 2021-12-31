@@ -35,3 +35,15 @@ func restErrorHandler(ctx *fiber.Ctx, err error) error {
 func notFoundHandler(c *fiber.Ctx) error {
 	return fiber.NewError(fiber.StatusNotFound)
 }
+
+func combineHandlers(handlers... fiber.Handler) fiber.Handler {
+	return func(ctx *fiber.Ctx) error {
+		for _, handler := range handlers {
+			err := handler(ctx)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}

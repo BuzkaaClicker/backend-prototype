@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestAuthCreateUser(t *testing.T) {
+func Test_AuthCreateUser(t *testing.T) {
 	if testing.Short() {
 		t.SkipNow()
 		return
@@ -23,14 +23,9 @@ func TestAuthCreateUser(t *testing.T) {
 	assert := assert.New(t)
 	ctx := context.Background()
 
-	_, err := db.NewCreateTable().
-		IfNotExists().
-		Model((*User)(nil)).
-		Exec(ctx)
-	assert.NoError(err)
+	app := createTestApp()
 
 	type Case struct {
-		AccessTokenResponse    discord.AccessTokenResponse
 		AccessTokenExchangeErr error
 		User                   discord.User
 		UserMeErr              error
@@ -42,18 +37,20 @@ func TestAuthCreateUser(t *testing.T) {
 	// :D EXPECTED ALBO NIE bool == int1 :D
 	validateEntitiesCount := func(expectedCount bool) {
 		var users []User
-		err = db.NewSelect().
+		err := app.db.NewSelect().
 			Model((*User)(nil)).
 			Where("discord_id=?", properUser.Id).
 			Scan(ctx, &users)
-		assert.NoError(err)
+		if !assert.NoError(err) {
+			return
+		}
 
 		if expectedCount {
-			assert.Equal(1, len(users))
-
-			user := users[0]
-			assert.Equal(user.DiscordId, properUser.Id)
-			assert.Equal(user.Email, properUser.Email)
+			if assert.Equal(1, len(users)) {
+				user := users[0]
+				assert.Equal(user.DiscordId, properUser.Id)
+				assert.Equal(user.Email, properUser.Email)
+			}
 		} else {
 			assert.Equal(0, len(users))
 		}
@@ -84,15 +81,18 @@ func TestAuthCreateUser(t *testing.T) {
 		assert.Equal(resp.Header.Get("Content-Type"), fiber.MIMEApplicationJSON, "Invalid content type")
 
 		var users []User
-		err = db.NewSelect().
+		err := app.db.NewSelect().
 			Model((*User)(nil)).
 			Where("discord_id=?", properUser.Id).
 			Scan(ctx, &users)
-		assert.NoError(err)
-		assert.Equal(1, len(users))
-		user := users[0]
-		assert.Equal(user.DiscordId, properUser.Id)
-		assert.Equal(user.Email, properUser.Email)
+		if !assert.NoError(err) {
+			return
+		}
+		if assert.Equal(1, len(users)) {
+			user := users[0]
+			assert.Equal(user.DiscordId, properUser.Id)
+			assert.Equal(user.Email, properUser.Email)
+		}
 	}
 
 	cases := []Case{
@@ -104,59 +104,65 @@ func TestAuthCreateUser(t *testing.T) {
 		{Validate: validateCreated, User: properUser},
 	}
 
-	for _, tc := range cases {
-		controller := AuthController{
-			DB: db,
-			UserMeProvider: func() discord.UserMe {
-				return func(tokenType, token string) (discord.User, error) {
-					return tc.User, tc.UserMeErr
-				}
-			},
-			AccessTokenExchange: func(code string) (discord.AccessTokenResponse, error) {
-				return tc.AccessTokenResponse, tc.AccessTokenExchangeErr
-			},
-			SessionStore: &SessionStore{Buntdb: bdb},
-			UserStore: &UserStore{DB: db},
+	caseTest := func (tc Case) {
+		app.authController.AccessTokenExchanger = func(code string) (discord.AccessTokenResponse, error) {
+			return discord.AccessTokenResponse{}, tc.AccessTokenExchangeErr
+		}
+		app.authController.UserMeProvider = func() discord.UserMe {
+			return func(tokenType, token string) (discord.User, error) {
+				return tc.User, tc.UserMeErr
+			}
 		}
 
-		app := fiber.New(fiber.Config{
-			ErrorHandler: restErrorHandler,
-		})
-		app.Get("/auth/discord", controller.LoginDiscord)
-
 		req := httptest.NewRequest("GET", "/auth/discord?code=21", nil)
-		resp, err := app.Test(req)
-		assert.NoError(err)
+		resp, err := app.server.Test(req)
+		if !assert.NoError(err) {
+			return
+		}
 		defer resp.Body.Close()
 		bodyBytes, err := ioutil.ReadAll(resp.Body)
-		assert.NoError(err)
+		if !assert.NoError(err) {
+			return
+		}
 		body := string(bodyBytes)
 
 		tc.Validate(resp, body)
 	}
+
+	for _, tc := range cases {
+		caseTest(tc)
+	}
 }
 
-func TestGenerateSessionTokenLength(t *testing.T) {
+func Test_GenerateSessionTokenLength(t *testing.T) {
 	assert := assert.New(t)
 
 	token, err := generateSessionToken()
-	assert.NoError(err)
-	assert.True(len(token) > 20)
+	if assert.NoError(err) {
+		assert.True(len(token) > 20)
+	}
 }
 
 func Test_SessionAuthorization(t *testing.T) {
+	if testing.Short() {
+		t.SkipNow()
+		return
+	}
 	assert := assert.New(t)
 
-	userStore := &UserStore{DB: db}
-	user, err := userStore.RegisterDiscordUser(context.Background(), discord.User{Username: "makin", Email: "makin"}, "empty")
-	assert.NoError(err)
+	app := createTestApp()
 
-	sessionStore := &SessionStore{Buntdb: bdb, UserStore: userStore}
-	session, err := sessionStore.RegisterNew(user.Id)
-	assert.NoError(err)
+	discordUser := discord.User{Username: "makin", Email: "makin"}
+	user, err := app.userStore.RegisterDiscordUser(context.Background(), discordUser, "empty")
+	if !assert.NoError(err) {
+		return
+	}
 
+	session, err := app.sessionStore.RegisterNew(user.Id)
+	if !assert.NoError(err) {
+		return
+	}
 	assert.NotNil(session)
-	app := fiber.New()
 
 	restrictedHandler := func(ctx *fiber.Ctx) error {
 		session := ctx.Locals(SessionKey).(*Session)
@@ -164,13 +170,14 @@ func Test_SessionAuthorization(t *testing.T) {
 		return err
 	}
 
-	app.Get("/restricted", combineHandlers(sessionStore.Authorize, restrictedHandler))
+	app.server.Get("/restricted", combineHandlers(app.sessionStore.Authorize, restrictedHandler))
 
-	cases := []struct {
+	type Case struct {
 		token            string
 		tokenType        string
 		expectedResponse string
-	}{
+	}
+	cases := []Case{
 		{
 			token:            session.Token,
 			tokenType:        "Bearer",
@@ -192,17 +199,33 @@ func Test_SessionAuthorization(t *testing.T) {
 		},
 	}
 
-	for _, tc := range cases {
+	app.authController.AccessTokenExchanger = func(code string) (discord.AccessTokenResponse, error) {
+		return discord.AccessTokenResponse{RefreshToken: "mock_refresh_token"}, nil
+	}
+	app.authController.UserMeProvider = func() discord.UserMe {
+		return func(tokenType, token string) (discord.User, error) {
+			return discordUser, nil
+		}
+	}
+
+	caseTest := func(tc Case) {
 		req := httptest.NewRequest("GET", "/restricted", nil)
 		if tc.token != "" {
 			req.Header.Set("Authorization", tc.tokenType+" "+tc.token)
 		}
-		resp, err := app.Test(req)
-		assert.NoError(err)
+		resp, err := app.server.Test(req)
+		if !assert.NoError(err) {
+			return
+		}
 		defer resp.Body.Close()
 
 		body, err := ioutil.ReadAll(resp.Body)
-		assert.NoError(err)
+		if assert.NoError(err) {
+			return
+		}
 		assert.Equal(tc.expectedResponse, string(body), tc)
+	}
+	for _, tc := range cases {
+		caseTest(tc)
 	}
 }

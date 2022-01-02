@@ -102,7 +102,7 @@ func (s *SessionStore) Authorize(ctx *fiber.Ctx) error {
 type AuthController struct {
 	DB                  *bun.DB
 	OAuthUrlFactory     discord.OAuthUrlFactory
-	AccessTokenExchange discord.AccessTokenExchange
+	AccessTokenExchanger discord.AccessTokenExchanger
 	UserMeProvider      discord.UserMeProvider
 	SessionStore        *SessionStore
 	UserStore           *UserStore
@@ -119,7 +119,7 @@ func (c *AuthController) LoginDiscord(ctx *fiber.Ctx) error {
 }
 
 func (c *AuthController) authenticateDiscord(ctx *fiber.Ctx, code string) error {
-	exchange, err := c.AccessTokenExchange(code)
+	exchange, err := c.AccessTokenExchanger(code)
 	if err != nil {
 		if errors.Is(err, discord.ErrOAuthInvalidCode) {
 			return fiber.NewError(fiber.StatusBadRequest, "invalid code")

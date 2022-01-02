@@ -15,13 +15,15 @@ func TestUserRoles(t *testing.T) {
 	assert := assert.New(t)
 	ctx := context.Background()
 
-	_, err := db.NewCreateTable().
+	app := createTestApp()
+
+	_, err := app.db.NewCreateTable().
 		IfNotExists().
 		Model((*User)(nil)).
 		Exec(ctx)
 	assert.NoError(err)
 
-	_, err = db.NewInsert().
+	_, err = app.db.NewInsert().
 		Model(&User{
 			DiscordId:           "123",
 			DiscordRefreshToken: "123",
@@ -32,7 +34,7 @@ func TestUserRoles(t *testing.T) {
 	assert.NoError(err)
 
 	var user User
-	err = db.NewSelect().
+	err = app.db.NewSelect().
 		Model((*User)(nil)).
 		Where("email=?", "user@rol.es").
 		Scan(ctx, &user)

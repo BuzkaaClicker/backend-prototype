@@ -4,10 +4,8 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base32"
-	"flag"
 	"fmt"
 	"os"
-	"testing"
 
 	"github.com/ory/dockertest"
 	"github.com/ory/dockertest/docker"
@@ -18,31 +16,24 @@ import (
 	"github.com/uptrace/bun/extra/bundebug"
 )
 
-var db *bun.DB
-var bdb *buntdb.DB
-
-func TestMain(m *testing.M) {
-	flag.Parse()
-
+func createTestDatabases() (bdb *buntdb.DB, db *bun.DB, shutdown func()) {
 	var err error
 	bdb, err = buntdb.Open(":memory:")
 	if err != nil {
 		panic(err)
 	}
 
-	var shutdownDb func()
-	if !testing.Short() {
-		logrus.Infoln("Starting db")
-		var err error
-		db, shutdownDb, err = createTestDb()
-		if err != nil {
-			logrus.WithError(err).Fatalln("Could not create test database.")
-			return
-		}
-		defer shutdownDb()
+	logrus.Infoln("Creating test pg db")
+	var shutdownPgDb func()
+	
+	db, shutdownPgDb, err = createTestDb()
+	if err != nil {
+		logrus.WithError(err).Fatalln("Could not create test database.")
 	}
-
-	m.Run()
+	return bdb, db, func() {
+		bdb.Close()
+		shutdownPgDb()
+	}
 }
 
 // Start postgres docker container and initialize `db` field.

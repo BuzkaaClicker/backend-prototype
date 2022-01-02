@@ -14,7 +14,7 @@ var ErrOAuthInvalidCode = errors.New("discord: oauth invalid code")
 
 type OAuthUrlFactory = func() string
 
-type AccessTokenExchange = func(code string) (AccessTokenResponse, error)
+type AccessTokenExchanger = func(code string) (AccessTokenResponse, error)
 
 type AccessTokenResponse struct {
 	AccessToken  string `json:"access_token"`
@@ -40,7 +40,7 @@ func RestOAuthUrlFactory(clientId string, redirectUri string) OAuthUrlFactory {
 	}
 }
 
-func RestAccessTokenExchanger(clientId string, clientSecret string, redirectUri string) AccessTokenExchange {
+func RestAccessTokenExchanger(clientId string, clientSecret string, redirectUri string) AccessTokenExchanger {
 	return func(code string) (AccessTokenResponse, error) {
 		agent := fiber.AcquireAgent()
 		defer fiber.ReleaseAgent(agent)

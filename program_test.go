@@ -18,11 +18,10 @@ func TestDownloadProgram(t *testing.T) {
 	assert := assert.New(t)
 	ctx := context.Background()
 
-	_, err := db.NewCreateTable().Model((*Program)(nil)).Exec(ctx)
-	assert.NoError(err)
+	app := createTestApp()
 
 	exampleFile := []ProgramFile{{Path: "installer.pkg", DownloadUrl: "https://buzkaaclicker.pl/sample", Hash: "256"}}
-	_, err = db.NewInsert().Model(&[]Program{
+	_, err := app.db.NewInsert().Model(&[]Program{
 		{Type: "installer", OS: "macOS", Arch: "x86-64", Branch: "stable",
 			Files: []ProgramFile{{Path: "installer.pkg", DownloadUrl: "https://buzkaaclicker.pl/sample", Hash: "499"}}},
 		{Type: "installer", OS: "macOS", Arch: "x86-64", Branch: "beta", Files: exampleFile},
@@ -33,8 +32,6 @@ func TestDownloadProgram(t *testing.T) {
 			Files: []ProgramFile{{Path: "installer.pkg", DownloadUrl: "https://buzkaaclicker.pl/sample", Hash: "1"}}},
 	}).Exec(ctx)
 	assert.NoError(err)
-
-	controller := ProgramController{Repo: PgProgramRepo{DB: db}}
 
 	cases := []struct {
 		url  string
@@ -52,14 +49,9 @@ func TestDownloadProgram(t *testing.T) {
 			`[{"path":"installer.pkg","download_url":"https://buzkaaclicker.pl/sample","hash":"256"}]`},
 	}
 
-	app := fiber.New(fiber.Config{
-		ErrorHandler: restErrorHandler,
-	})
-	app.Get("/download/:file_type", controller.Download)
-
 	for _, tc := range cases {
 		req := httptest.NewRequest("GET", tc.url, nil)
-		resp, err := app.Test(req)
+		resp, err := app.server.Test(req)
 		assert.NoError(err)
 		defer resp.Body.Close()
 

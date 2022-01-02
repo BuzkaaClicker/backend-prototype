@@ -23,6 +23,88 @@ import (
 	"github.com/uptrace/bun/extra/bundebug"
 )
 
+type app struct {
+	bdb               *buntdb.DB
+	db                *bun.DB
+	userStore         UserStore
+	sessionStore      SessionStore
+	authController    AuthController
+	programRepo       ProgramRepo
+	programController ProgramController
+	server            *fiber.App
+}
+
+func newApp(
+	ctx context.Context,
+	bdb *buntdb.DB,
+	db *bun.DB,
+	discordConfig discordConfig,
+) *app {
+	createDbSchema(ctx, db)
+
+	var app app
+	app.bdb = bdb
+	app.db = db
+	app.userStore = UserStore{DB: db}
+	app.sessionStore = SessionStore{Buntdb: bdb, UserStore: &app.userStore}
+
+	app.authController = AuthController{
+		DB:                   db,
+		OAuthUrlFactory:      discordConfig.OAuthUrlFactory(),
+		AccessTokenExchanger: discordConfig.AccessTokenExchanger(),
+		UserMeProvider:       discord.RestUserMeProvider,
+		SessionStore:         &app.sessionStore,
+		UserStore:            &app.userStore,
+	}
+
+	app.programRepo = &PgProgramRepo{DB: db}
+	app.programController = ProgramController{Repo: app.programRepo}
+
+	app.server = createServer(&app.sessionStore, &app.authController, &app.programController)
+	return &app
+}
+
+func (a *app) ListenAndServe() {
+	a.server.Listen("127.0.0.1:2137")
+}
+
+func (a *app) Shutdown() error {
+	return a.server.Shutdown()
+}
+
+func createServer(sessions *SessionStore, auth *AuthController, program *ProgramController) *fiber.App {
+	app := fiber.New(fiber.Config{
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+		ErrorHandler: restErrorHandler,
+	})
+	app.Server().MaxConnsPerIP = 4
+	app.Use(logHandler())
+
+	app.Get("/status", combineHandlers(
+		sessions.Authorize, RequirePermissions(PermissionAdminDashboard), monitor.New()))
+	app.Get("/auth/discord", auth.LoginDiscord)
+	app.Get("/download/:file_type", program.Download)
+
+	app.Use(notFoundHandler)
+	return app
+}
+
+func createDbSchema(ctx context.Context, db *bun.DB) {
+	models := []interface{}{
+		(*User)(nil),
+		(*Program)(nil),
+	}
+	for _, model := range models {
+		modelType := reflect.TypeOf(model)
+		logrus.WithField("model", modelType).Debugln("Creating table.")
+		_, err := db.NewCreateTable().IfNotExists().Model(model).Exec(ctx)
+		if err != nil {
+			logrus.WithField("model", modelType).WithError(err).Fatalln("Could not create table.")
+		}
+	}
+}
+
 func setupLogger(verbose bool) {
 	logrus.SetFormatter(&logrus.TextFormatter{
 		TimestampFormat: time.Stamp,
@@ -50,19 +132,6 @@ func openDb(ctx context.Context, pgDsn string) *bun.DB {
 		logrus.WithError(err).Fatalln("Could not ping database.")
 	}
 	db := bun.NewDB(sqldb, pgdialect.New())
-
-	models := []interface{}{
-		(*User)(nil),
-		(*Program)(nil),
-	}
-	for _, model := range models {
-		modelType := reflect.TypeOf(model)
-		logrus.WithField("model", modelType).Debugln("Creating table.")
-		_, err = db.NewCreateTable().IfNotExists().Model(model).Exec(ctx)
-		if err != nil {
-			logrus.WithField("model", modelType).WithError(err).Fatalln("Could not create table.")
-		}
-	}
 	return db
 }
 
@@ -74,9 +143,27 @@ func logHandler() fiber.Handler {
 }
 
 type discordConfig struct {
-	clientId     string
-	clientSecret string
-	redirectId   string
+	clientId             string
+	clientSecret         string
+	redirectUri          string
+	oauthUrlFactory      discord.OAuthUrlFactory
+	accessTokenExchanger discord.AccessTokenExchanger
+}
+
+func (c discordConfig) OAuthUrlFactory() discord.OAuthUrlFactory {
+	if c.oauthUrlFactory == nil {
+		return discord.RestOAuthUrlFactory(c.clientId, c.redirectUri)
+	} else {
+		return c.oauthUrlFactory
+	}
+}
+
+func (c discordConfig) AccessTokenExchanger() discord.AccessTokenExchanger {
+	if c.oauthUrlFactory == nil {
+		return discord.RestAccessTokenExchanger(c.clientId, c.clientSecret, c.redirectUri)
+	} else {
+		return c.accessTokenExchanger
+	}
 }
 
 func discordConfigFromEnv() discordConfig {
@@ -92,41 +179,7 @@ func discordConfigFromEnv() discordConfig {
 	if redirectUri == "" {
 		logrus.Fatalln("DISCORD_AUTH_URI not set!")
 	}
-	return discordConfig{clientId, clientSecret, redirectUri}
-}
-
-func createApp(ctx context.Context, bdb *buntdb.DB, db *bun.DB, discordConfig discordConfig) *fiber.App {
-	app := fiber.New(fiber.Config{
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
-		ErrorHandler: restErrorHandler,
-	})
-	app.Server().MaxConnsPerIP = 4
-
-	userStore := &UserStore{DB: db}
-	sessionStore := &SessionStore{Buntdb: bdb, UserStore: userStore}
-	authController := AuthController{
-		DB:              db,
-		OAuthUrlFactory: discord.RestOAuthUrlFactory(discordConfig.clientId, discordConfig.redirectId),
-		AccessTokenExchange: discord.RestAccessTokenExchanger(discordConfig.clientId,
-			discordConfig.clientSecret, discordConfig.redirectId),
-		UserMeProvider: discord.RestUserMeProvider,
-		SessionStore:   sessionStore,
-		UserStore:      userStore,
-	}
-
-	app.Use(logHandler())
-	app.Get("/status", combineHandlers(
-		sessionStore.Authorize, RequirePermissions(PermissionAdminDashboard), monitor.New()))
-
-	app.Get("/auth/discord", authController.LoginDiscord)
-
-	programRepo := &PgProgramRepo{DB: db}
-	programController := ProgramController{Repo: programRepo}
-	app.Get("/download/:file_type", programController.Download)
-
-	app.Use(notFoundHandler)
-	return app
+	return discordConfig{clientId, clientSecret, redirectUri, nil, nil}
 }
 
 func awaitInterruption() {
@@ -162,15 +215,15 @@ func main() {
 
 	discordConfig := discordConfigFromEnv()
 
-	logrus.Infoln("Creating fiber app.")
-	fiberApp := createApp(context.Background(), bdb, db, discordConfig)
-	go fiberApp.Listen("127.0.0.1:2137")
+	logrus.Infoln("Creating app.")
+	app := newApp(context.Background(), bdb, db, discordConfig)
+	go app.ListenAndServe()
 
 	logrus.Infoln("Starting listening... To shut down use ^C")
-
 	awaitInterruption()
+
 	logrus.Infoln("Shutting down...")
-	err = fiberApp.Shutdown()
+	err = app.Shutdown()
 	if err != nil {
 		logrus.WithError(err).Warningln("Fiber shutdown failed.")
 	}

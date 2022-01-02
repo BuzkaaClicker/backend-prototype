@@ -28,7 +28,7 @@ func TestUserRoles(t *testing.T) {
 			DiscordId:           "123",
 			DiscordRefreshToken: "123",
 			Email:               "user@rol.es",
-			RolesNames:          []string{"pro", "UNDEFINED role"},
+			RolesNames:          []RoleId{RoleIdPro, RoleId("UNDEFINED role")},
 		}).
 		Exec(ctx)
 	assert.NoError(err)
@@ -41,7 +41,7 @@ func TestUserRoles(t *testing.T) {
 	assert.NoError(err)
 
 	roles := user.Roles
-	assert.Equal(roles, Roles{AllRoles["pro"]})
+	assert.Equal(Roles{AllRoles[RoleIdPro]}, roles)
 	assert.Equal(AccessAllowed, roles.Access(PermissionDownloadPro))
 	assert.Equal(AccessUndefined, roles.Access(PermissionAdminDashboard))
 }

@@ -104,7 +104,7 @@ func Test_AuthCreateUser(t *testing.T) {
 		{Validate: validateCreated, User: properUser},
 	}
 
-	caseTest := func (tc Case) {
+	caseTest := func(tc Case) {
 		app.authController.AccessTokenExchanger = func(code string) (discord.AccessTokenResponse, error) {
 			return discord.AccessTokenResponse{}, tc.AccessTokenExchangeErr
 		}
@@ -150,66 +150,111 @@ func Test_SessionAuthorization(t *testing.T) {
 	}
 	assert := assert.New(t)
 
-	app := createTestApp()
-
-	discordUser := discord.User{Username: "makin", Email: "makin"}
-	user, err := app.userStore.RegisterDiscordUser(context.Background(), discordUser, "empty")
-	if !assert.NoError(err) {
-		return
-	}
-
-	session, err := app.sessionStore.RegisterNew(user.Id)
-	if !assert.NoError(err) {
-		return
-	}
-	assert.NotNil(session)
-
 	restrictedHandler := func(ctx *fiber.Ctx) error {
 		session := ctx.Locals(SessionKey).(*Session)
 		_, err := fmt.Fprintf(ctx, "Authorized. User id: %d", session.UserId)
 		return err
 	}
 
-	app.server.Get("/restricted", combineHandlers(app.sessionStore.Authorize, restrictedHandler))
+	app := createTestApp(func(app *app) {
+		app.server.Get("/test/restricted", combineHandlers(app.sessionStore.Authorize, restrictedHandler))
+		app.server.Get("/test/dashboard", combineHandlers(app.sessionStore.Authorize, RequirePermissions(PermissionAdminDashboard),
+			restrictedHandler))
+	})
+
+	registerUser := func(discordUser discord.User) (*User, *Session, error) {
+		user, err := app.userStore.RegisterDiscordUser(context.Background(), discordUser, "refresh-token-mock")
+		if err != nil {
+			return nil, nil, fmt.Errorf("register user: %w", err)
+		}
+		session, err := app.sessionStore.RegisterNew(user.Id)
+		if err != nil {
+			return nil, nil, fmt.Errorf("register session: %w", err)
+		}
+		return user, session, nil
+	}
+
+	unprivilegedUser, unprivilegedSession, err := registerUser(
+		discord.User{Id: "makin", Username: "makin", Email: "makin"})
+	if !assert.NoError(err) {
+		return
+	}
+
+	privilegedUser, privilegedSession, err := registerUser(
+		discord.User{Id: "morton", Username: "morton", Email: "morton"})
+	if !assert.NoError(err) {
+		return
+	}
+	privilegedUser.RolesNames = append(privilegedUser.RolesNames, RoleIdAdmin)
+	_, err = app.db.NewUpdate().
+		Model(privilegedUser).
+		Where("id=?", privilegedUser.Id).
+		Exec(context.Background())
+	if !assert.NoError(err) {
+		return
+	}
 
 	type Case struct {
+		path             string
 		token            string
 		tokenType        string
 		expectedResponse string
 	}
 	cases := []Case{
 		{
-			token:            session.Token,
+			path:             "/test/restricted",
+			token:            unprivilegedSession.Token,
 			tokenType:        "Bearer",
-			expectedResponse: "Authorized. User id: " + strconv.Itoa(int(user.Id)),
+			expectedResponse: "Authorized. User id: " + strconv.Itoa(int(unprivilegedUser.Id)),
 		},
 		{
+			path:             "/test/restricted",
 			token:            "",
-			expectedResponse: "Unauthorized",
+			expectedResponse: fakeHttpErrorResponse(fiber.ErrUnauthorized.Message),
 		},
 		{
+			path:             "/test/restricted",
 			token:            "unexisting_session_token",
 			tokenType:        "Bearer",
-			expectedResponse: "Unauthorized",
+			expectedResponse: fakeHttpErrorResponse(fiber.ErrUnauthorized.Message),
 		},
 		{
+			path:             "/test/restricted",
 			token:            "basic_is_not_a_valid_auth_type",
 			tokenType:        "Basic",
-			expectedResponse: "invalid auth type",
+			expectedResponse: fakeHttpErrorResponse("invalid auth type"),
+		},
+		// permission cases
+		{
+			path:             "/test/dashboard",
+			token:            unprivilegedSession.Token,
+			tokenType:        "Bearer",
+			expectedResponse: fakeHttpErrorResponse(fiber.ErrUnauthorized.Message),
+		},
+		{
+			path:             "/test/dashboard",
+			token:            "",
+			expectedResponse: fakeHttpErrorResponse(fiber.ErrUnauthorized.Message),
+		},
+		{
+			path:             "/test/dashboard",
+			token:            "not existing token",
+			expectedResponse: fakeHttpErrorResponse("invalid auth type"),
+		},
+		{
+			path:             "/test/dashboard",
+			token:            privilegedSession.Token,
+			tokenType:        "Bearer",
+			expectedResponse: "Authorized. User id: " + strconv.Itoa(int(privilegedUser.Id)),
 		},
 	}
 
 	app.authController.AccessTokenExchanger = func(code string) (discord.AccessTokenResponse, error) {
 		return discord.AccessTokenResponse{RefreshToken: "mock_refresh_token"}, nil
 	}
-	app.authController.UserMeProvider = func() discord.UserMe {
-		return func(tokenType, token string) (discord.User, error) {
-			return discordUser, nil
-		}
-	}
 
 	caseTest := func(tc Case) {
-		req := httptest.NewRequest("GET", "/restricted", nil)
+		req := httptest.NewRequest("GET", tc.path, nil)
 		if tc.token != "" {
 			req.Header.Set("Authorization", tc.tokenType+" "+tc.token)
 		}
@@ -220,7 +265,7 @@ func Test_SessionAuthorization(t *testing.T) {
 		defer resp.Body.Close()
 
 		body, err := ioutil.ReadAll(resp.Body)
-		if assert.NoError(err) {
+		if !assert.NoError(err) {
 			return
 		}
 		assert.Equal(tc.expectedResponse, string(body), tc)

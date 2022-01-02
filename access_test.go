@@ -76,3 +76,36 @@ func TestAccessMerge(t *testing.T) {
 		assert.Equal(AccessForbidden, equalCase.Access(PermissionDownloadPro), "access index: %d", i)
 	}
 }
+
+func TestMapRolesById(t *testing.T) {
+	assert := assert.New(t)
+
+	roleAdmin := Role{
+		Id: RoleIdAdmin,
+		Permissions: map[PermissionName]bool{
+			PermissionDownloadPro:    true,
+			PermissionAdminDashboard: true,
+		},
+	}
+
+	rolePro := Role{
+		Id: RoleIdPro,
+		Permissions: map[PermissionName]bool{
+			PermissionDownloadPro: true,
+		},
+	}
+
+	rolesMapped := mapRolesById(roleAdmin, rolePro)
+	assert.Equal(roleAdmin, rolesMapped[RoleIdAdmin])
+	assert.Equal(rolePro, rolesMapped[RoleIdPro])
+
+	assert.Panics(func() {
+		mapRolesById(roleAdmin, roleAdmin)
+	})
+	assert.Panics(func() {
+		mapRolesById(roleAdmin, rolePro, roleAdmin)
+	})
+	assert.Panics(func() {
+		mapRolesById(rolePro, rolePro, roleAdmin)
+	})
+}

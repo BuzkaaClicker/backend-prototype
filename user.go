@@ -16,7 +16,7 @@ type User struct {
 
 	Id                  int64     `bun:",pk,autoincrement" json:"-"`
 	CreatedAt           time.Time `bun:",nullzero,notnull,default:current_timestamp" json:"-"`
-	RolesNames          []string  `bun:",notnull,array" json:"-"`
+	RolesNames          []RoleId  `bun:",notnull,array" json:"-"`
 	DiscordId           string    `bun:",notnull,unique" json:"-"`
 	DiscordRefreshToken string    `bun:",notnull" json:"-"`
 	Email               string    `bun:"email,notnull" json:"-"`
@@ -48,7 +48,7 @@ func (s *UserStore) RegisterDiscordUser(ctx context.Context,
 		DiscordId:           dcUser.Id,
 		DiscordRefreshToken: refreshToken,
 		Email:               dcUser.Email,
-		RolesNames:          []string{},
+		RolesNames:          []RoleId{},
 	}
 
 	_, err := s.DB.NewInsert().

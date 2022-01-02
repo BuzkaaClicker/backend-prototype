@@ -4,9 +4,11 @@ import (
 	"context"
 	"flag"
 	"testing"
+
+	"github.com/sirupsen/logrus"
 )
 
-var createTestApp func() *app
+var createTestApp func(configureServer... func(app *app)) *app
 
 func TestMain(m *testing.M) {
 	flag.Parse()
@@ -26,8 +28,16 @@ func setupTestIntegrationInfra() (shutdown func()) {
 		redirectUri:  "mock_redirect_uri",
 	}
 	bdb, db, shutdownDbs := createTestDatabases()
-	createTestApp = func() *app {
-		return newApp(context.Background(), bdb, db, discordConfig)
+	createTestApp = func(configureServer... func(app *app)) *app {
+		switch len(configureServer) {
+		case 0:
+			return newApp(context.Background(), bdb, db, discordConfig, nil)
+		case 1:
+			return newApp(context.Background(), bdb, db, discordConfig, configureServer[0])
+		default:
+			logrus.Fatalf("invalid configure server handler count: %d (must be 0 or 1)\n", len(configureServer))
+			return nil
+		}
 	}
 
 	return func() {

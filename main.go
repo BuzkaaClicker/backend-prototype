@@ -39,6 +39,9 @@ func newApp(
 	bdb *buntdb.DB,
 	db *bun.DB,
 	discordConfig discordConfig,
+	// Called right before server registers not found handler at end of the route stack.
+	// Required by tests to register their custom test routes. 
+	configureServer func(app *app),
 ) *app {
 	createDbSchema(ctx, db)
 
@@ -60,7 +63,22 @@ func newApp(
 	app.programRepo = &PgProgramRepo{DB: db}
 	app.programController = ProgramController{Repo: app.programRepo}
 
-	app.server = createServer(&app.sessionStore, &app.authController, &app.programController)
+	createServer(func(server *fiber.App) {
+		app.server = server
+
+		server.Use(logHandler())
+
+		if configureServer != nil {
+			configureServer(&app)
+		}
+
+		server.Get("/status", combineHandlers(
+			app.sessionStore.Authorize, RequirePermissions(PermissionAdminDashboard), monitor.New()))
+		server.Get("/auth/discord", app.authController.LoginDiscord)
+		server.Get("/download/:file_type", app.programController.Download)
+
+		server.Use(notFoundHandler)
+	})
 	return &app
 }
 
@@ -72,22 +90,19 @@ func (a *app) Shutdown() error {
 	return a.server.Shutdown()
 }
 
-func createServer(sessions *SessionStore, auth *AuthController, program *ProgramController) *fiber.App {
-	app := fiber.New(fiber.Config{
+func createServer(configure func(server *fiber.App)) *fiber.App {
+	server := fiber.New(fiber.Config{
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 5 * time.Second,
 		ErrorHandler: restErrorHandler,
 	})
-	app.Server().MaxConnsPerIP = 4
-	app.Use(logHandler())
+	server.Server().MaxConnsPerIP = 4
+	server.Use(logHandler())
 
-	app.Get("/status", combineHandlers(
-		sessions.Authorize, RequirePermissions(PermissionAdminDashboard), monitor.New()))
-	app.Get("/auth/discord", auth.LoginDiscord)
-	app.Get("/download/:file_type", program.Download)
+	configure(server)
 
-	app.Use(notFoundHandler)
-	return app
+	server.Use(notFoundHandler)
+	return server
 }
 
 func createDbSchema(ctx context.Context, db *bun.DB) {
@@ -216,7 +231,7 @@ func main() {
 	discordConfig := discordConfigFromEnv()
 
 	logrus.Infoln("Creating app.")
-	app := newApp(context.Background(), bdb, db, discordConfig)
+	app := newApp(context.Background(), bdb, db, discordConfig, nil)
 	go app.ListenAndServe()
 
 	logrus.Infoln("Starting listening... To shut down use ^C")

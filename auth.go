@@ -150,7 +150,7 @@ func (c *AuthController) authenticateDiscord(ctx *fiber.Ctx, code string) error 
 	return ctx.Status(fiber.StatusCreated).JSON(map[string]interface{}{
 		"user_id":      session.UserId,
 		"access_token": session.Token,
-		"expires_in":   time.Now().Add(sessionTTL).Unix(),
+		"expires_at":   time.Now().Add(sessionTTL).Unix(),
 	})
 }
 

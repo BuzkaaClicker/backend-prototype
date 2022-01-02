@@ -30,25 +30,43 @@ const (
 	PermissionAdminDashboard PermissionName = "admin.dashboard"
 )
 
+type RoleId string
+
 type Role struct {
-	Name        string
+	Id          RoleId
 	Permissions map[PermissionName]bool
 }
 
-var AllRoles = map[string]Role{
-	"pro": {
-		Name: "pro",
-		Permissions: map[PermissionName]bool{
-			PermissionDownloadPro: true,
-		},
-	},
-	"admin": {
-		Name: "admin",
+var (
+	RoleIdPro   RoleId = "pro"
+	RoleIdAdmin RoleId = "admin"
+)
+
+var AllRoles map[RoleId]Role = mapRolesById(
+	Role{
+		Id: RoleIdAdmin,
 		Permissions: map[PermissionName]bool{
 			PermissionDownloadPro:    true,
 			PermissionAdminDashboard: true,
 		},
 	},
+	Role{
+		Id: RoleIdPro,
+		Permissions: map[PermissionName]bool{
+			PermissionDownloadPro: true,
+		},
+	},
+)
+
+func mapRolesById(roles ...Role) map[RoleId]Role {
+	rolesMap := make(map[RoleId]Role)
+	for _, role := range roles {
+		if _, ok := rolesMap[role.Id]; ok {
+			panic("Duplicated role id: `" + role.Id + "`!")
+		}
+		rolesMap[role.Id] = role
+	}
+	return rolesMap
 }
 
 func (role Role) Access(name PermissionName) Access {

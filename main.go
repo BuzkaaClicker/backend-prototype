@@ -40,7 +40,7 @@ func newApp(
 	db *bun.DB,
 	discordConfig discordConfig,
 	// Called right before server registers not found handler at end of the route stack.
-	// Required by tests to register their custom test routes. 
+	// Required by tests to register their custom test routes.
 	configureServer func(app *app),
 ) *app {
 	createDbSchema(ctx, db)
@@ -72,10 +72,17 @@ func newApp(
 			configureServer(&app)
 		}
 
-		server.Get("/status", combineHandlers(
+		api := fiber.New()
+		api.Get("/status", combineHandlers(
 			app.sessionStore.Authorize, RequirePermissions(PermissionAdminDashboard), monitor.New()))
-		server.Get("/auth/discord", app.authController.LoginDiscord)
-		server.Get("/download/:file_type", app.programController.Download)
+		api.Get("/auth/discord", app.authController.LoginDiscord)
+		api.Get("/download/:file_type", app.programController.Download)
+		server.Mount("/api/", api)
+
+		server.Static("/", "./www/", fiber.Static{
+			Browse: false,
+			Index:  "index.html",
+		})
 
 		server.Use(notFoundHandler)
 	})
@@ -96,7 +103,7 @@ func createServer(configure func(server *fiber.App)) *fiber.App {
 		WriteTimeout: 5 * time.Second,
 		ErrorHandler: restErrorHandler,
 	})
-	server.Server().MaxConnsPerIP = 4
+	server.Server().MaxConnsPerIP = 20
 	server.Use(logHandler())
 
 	configure(server)

@@ -100,29 +100,38 @@ func (s *SessionStore) Authorize(ctx *fiber.Ctx) error {
 }
 
 type AuthController struct {
-	DB                  *bun.DB
-	OAuthUrlFactory     discord.OAuthUrlFactory
-	AccessTokenExchanger discord.AccessTokenExchanger
-	UserMeProvider      discord.UserMeProvider
-	SessionStore        *SessionStore
-	UserStore           *UserStore
+	DB                    *bun.DB
+	CreateDiscordOAuthUrl discord.OAuthUrlFactory
+	ExchangeAccessToken   discord.AccessTokenExchanger
+	UserMeProvider        discord.UserMeProvider
+	SessionStore          *SessionStore
+	UserStore             *UserStore
 }
 
-func (c *AuthController) LoginDiscord(ctx *fiber.Ctx) error {
-	code := ctx.Query("code")
-	if code == "" {
-		url := c.OAuthUrlFactory()
-		return ctx.Redirect(url)
-	} else {
-		return c.authenticateDiscord(ctx, code)
+func (c *AuthController) ServeCreateDiscordOAuthUrl(ctx *fiber.Ctx) error {
+	url := c.CreateDiscordOAuthUrl()
+	return ctx.JSON(map[string]string{
+		"url": url,
+	})
+}
+
+func (c *AuthController) ServeAuthenticateDiscord(ctx *fiber.Ctx) error {
+	body := struct {
+		Code string `json:"code"`
+	}{}
+	if err := ctx.BodyParser(&body); err != nil {
+		requestLog(ctx).WithError(err).Infoln("Invalid body.")
+		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
 	}
-}
+	code := body.Code
+	if code == "" {
+		return fiber.NewError(fiber.StatusUnauthorized, "invalid code")
+	}
 
-func (c *AuthController) authenticateDiscord(ctx *fiber.Ctx, code string) error {
-	exchange, err := c.AccessTokenExchanger(code)
+	exchange, err := c.ExchangeAccessToken(code)
 	if err != nil {
 		if errors.Is(err, discord.ErrOAuthInvalidCode) {
-			return fiber.NewError(fiber.StatusBadRequest, "invalid code")
+			return fiber.NewError(fiber.StatusUnauthorized, "invalid code")
 		} else {
 			return fmt.Errorf("access token exchange: %w", err)
 		}

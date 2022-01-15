@@ -8,9 +8,14 @@ import (
 )
 
 type User struct {
-	Id       string `json:"id"`
-	Username string `json:"username"`
-	Email    string `json:"email"`
+	Id         string `json:"id"`
+	Username   string `json:"username"`
+	Email      string `json:"email"`
+	AvatarHash string `json:"avatar"`
+}
+
+func (u User) AvatarUrl() string {
+	return fmt.Sprintf("https://cdn.discordapp.com/avatars/%s/%s.png", u.Id, u.AvatarHash)
 }
 
 type UserMe = func(tokenType string, token string) (User, error)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -64,7 +65,7 @@ func Test_AuthCreateUser(t *testing.T) {
 
 	validateOAuthCode := func(resp *http.Response, body string) {
 		validateEntitiesCount(false)
-		assert.Equal(fiber.StatusBadRequest, resp.StatusCode)
+		assert.Equal(fiber.StatusUnauthorized, resp.StatusCode)
 		assert.Equal(fakeHttpErrorResponse("invalid code"), body)
 	}
 
@@ -105,7 +106,7 @@ func Test_AuthCreateUser(t *testing.T) {
 	}
 
 	caseTest := func(tc Case) {
-		app.authController.AccessTokenExchanger = func(code string) (discord.AccessTokenResponse, error) {
+		app.authController.ExchangeAccessToken = func(code string) (discord.AccessTokenResponse, error) {
 			return discord.AccessTokenResponse{}, tc.AccessTokenExchangeErr
 		}
 		app.authController.UserMeProvider = func() discord.UserMe {
@@ -114,7 +115,8 @@ func Test_AuthCreateUser(t *testing.T) {
 			}
 		}
 
-		req := httptest.NewRequest("GET", "/auth/discord?code=21", nil)
+		req := httptest.NewRequest("POST", "/api/auth/discord", bytes.NewBuffer([]byte(`{"code": "21"}`)))
+		req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
 		resp, err := app.server.Test(req)
 		if !assert.NoError(err) {
 			return
@@ -249,7 +251,7 @@ func Test_SessionAuthorization(t *testing.T) {
 		},
 	}
 
-	app.authController.AccessTokenExchanger = func(code string) (discord.AccessTokenResponse, error) {
+	app.authController.ExchangeAccessToken = func(code string) (discord.AccessTokenResponse, error) {
 		return discord.AccessTokenResponse{RefreshToken: "mock_refresh_token"}, nil
 	}
 

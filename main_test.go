@@ -31,9 +31,9 @@ func setupTestIntegrationInfra() (shutdown func()) {
 	createTestApp = func(configureServer... func(app *app)) *app {
 		switch len(configureServer) {
 		case 0:
-			return newApp(context.Background(), bdb, db, discordConfig, nil)
+			return newApp(context.Background(), bdb, db, discordConfig, true, nil)
 		case 1:
-			return newApp(context.Background(), bdb, db, discordConfig, configureServer[0])
+			return newApp(context.Background(), bdb, db, discordConfig, true, configureServer[0])
 		default:
 			logrus.Fatalf("invalid configure server handler count: %d (must be 0 or 1)\n", len(configureServer))
 			return nil

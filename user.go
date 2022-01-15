@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -20,6 +21,7 @@ type User struct {
 	DiscordId           string    `bun:",notnull,unique" json:"-"`
 	DiscordRefreshToken string    `bun:",notnull" json:"-"`
 	Email               string    `bun:"email,notnull" json:"-"`
+	Profile             *Profile  `bun:"rel:has-one,join:id=user_id"`
 
 	// Mapped (in AfterScanRow hook) roles from RolesNames.
 	Roles Roles `bun:"-"`
@@ -51,13 +53,33 @@ func (s *UserStore) RegisterDiscordUser(ctx context.Context,
 		RolesNames:          []RoleId{},
 	}
 
-	_, err := s.DB.NewInsert().
-		Model(user).
-		On(`CONFLICT (discord_id) DO UPDATE SET email=EXCLUDED.email, ` +
-			`discord_refresh_token=EXCLUDED.discord_refresh_token`).
-		Exec(ctx)
+	err := s.DB.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
+		_, err := tx.NewInsert().
+			Model(user).
+			On(`CONFLICT (discord_id) DO UPDATE SET email=EXCLUDED.email, ` +
+				`discord_refresh_token=EXCLUDED.discord_refresh_token`).
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("insert user: %w", err)
+		}
+
+		profile := &Profile{
+			UserId:    user.Id,
+			Name:      dcUser.Username,
+			AvatarUrl: dcUser.AvatarUrl(),
+		}
+		_, err = tx.NewInsert().
+			Model(profile).
+			On(`CONFLICT (user_id) DO UPDATE SET name=EXCLUDED.name, avatar_url=EXCLUDED.avatar_url`).
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("insert profile: %w", err)
+		}
+		user.Profile = profile
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("insert user: %w", err)
+		return nil, err
 	}
 	return user, nil
 }
@@ -66,7 +88,8 @@ func (s *UserStore) ById(ctx context.Context, userId int64) (*User, error) {
 	user := new(User)
 	err := s.DB.NewSelect().
 		Model(user).
-		Where("id=?", userId).
+		Where(`"user"."id"=?`, userId).
+		Relation("Profile").
 		Scan(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("select user: %w", err)

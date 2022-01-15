@@ -37,15 +37,15 @@ func TestDownloadProgram(t *testing.T) {
 		url  string
 		body string
 	}{
-		{"/download/installer?os=macOS&arch=x86-64&branch=stable",
+		{"/api/download/installer?os=macOS&arch=x86-64&branch=stable",
 			`[{"path":"installer.pkg","download_url":"https://buzkaaclicker.pl/sample","hash":"499"}]`},
-		{"/download/clicker?os=macOS&arch=x86-64&branch=stable",
+		{"/api/download/clicker?os=macOS&arch=x86-64&branch=stable",
 			`[{"path":"installer.pkg","download_url":"https://buzkaaclicker.pl/sample","hash":"1"}]`},
-		{"/download/clicker?os=macOS&arch=arm64&branch=stable", `{"error_message":"Not Found"}`},
-		{"/download/clicker?os=macOS&arch=x86-64&branch=unstable", `{"error_message":"Not Found"}`},
-		{"/download/clicker?os=macOSes&arch=x86-64&branch=stable", `{"error_message":"Not Found"}`},
-		{"/download/clicker?os=Windows&arch=x86-64&branch=stable", `{"error_message":"Not Found"}`},
-		{"/download/installer?os=Windows&arch=x86-64&branch=stable",
+		{"/api/download/clicker?os=macOS&arch=arm64&branch=stable", `{"error_message":"Not Found"}`},
+		{"/api/download/clicker?os=macOS&arch=x86-64&branch=unstable", `{"error_message":"Not Found"}`},
+		{"/api/download/clicker?os=macOSes&arch=x86-64&branch=stable", `{"error_message":"Not Found"}`},
+		{"/api/download/clicker?os=Windows&arch=x86-64&branch=stable", `{"error_message":"Not Found"}`},
+		{"/api/download/installer?os=Windows&arch=x86-64&branch=stable",
 			`[{"path":"installer.pkg","download_url":"https://buzkaaclicker.pl/sample","hash":"256"}]`},
 	}
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/buzkaaclicker/backend/discord"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/monitor"
 	"github.com/sirupsen/logrus"
 	logrusys "github.com/sirupsen/logrus/hooks/syslog"
@@ -27,10 +28,12 @@ type app struct {
 	bdb               *buntdb.DB
 	db                *bun.DB
 	userStore         UserStore
+	profileStore      ProfileStore
 	sessionStore      SessionStore
 	authController    AuthController
 	programRepo       ProgramRepo
 	programController ProgramController
+	profileController ProfileController
 	server            *fiber.App
 }
 
@@ -39,6 +42,7 @@ func newApp(
 	bdb *buntdb.DB,
 	db *bun.DB,
 	discordConfig discordConfig,
+	debug bool,
 	// Called right before server registers not found handler at end of the route stack.
 	// Required by tests to register their custom test routes.
 	configureServer func(app *app),
@@ -49,19 +53,21 @@ func newApp(
 	app.bdb = bdb
 	app.db = db
 	app.userStore = UserStore{DB: db}
+	app.profileStore = ProfileStore{DB: db}
 	app.sessionStore = SessionStore{Buntdb: bdb, UserStore: &app.userStore}
 
 	app.authController = AuthController{
-		DB:                   db,
-		OAuthUrlFactory:      discordConfig.OAuthUrlFactory(),
-		AccessTokenExchanger: discordConfig.AccessTokenExchanger(),
-		UserMeProvider:       discord.RestUserMeProvider,
-		SessionStore:         &app.sessionStore,
-		UserStore:            &app.userStore,
+		DB:                    db,
+		CreateDiscordOAuthUrl: discordConfig.OAuthUrlFactory(),
+		ExchangeAccessToken:   discordConfig.AccessTokenExchanger(),
+		UserMeProvider:        discord.RestUserMeProvider,
+		SessionStore:          &app.sessionStore,
+		UserStore:             &app.userStore,
 	}
 
 	app.programRepo = &PgProgramRepo{DB: db}
 	app.programController = ProgramController{Repo: app.programRepo}
+	app.profileController = ProfileController{ProfileStore: app.profileStore}
 
 	createServer(func(server *fiber.App) {
 		app.server = server
@@ -72,11 +78,24 @@ func newApp(
 			configureServer(&app)
 		}
 
-		api := fiber.New()
+		api := fiber.New(fiber.Config{
+			ReadTimeout:  10 * time.Second,
+			WriteTimeout: 10 * time.Second,
+			ErrorHandler: restErrorHandler,
+		})
+
+		allowOrigins := "https://buzkaaclicker.pl"
+		if debug {
+			allowOrigins += ", http://test.buzkaaclicker.pl:3000"
+		}
+		api.Use(cors.New(cors.Config{AllowOrigins: allowOrigins}))
+
 		api.Get("/status", combineHandlers(
 			app.sessionStore.Authorize, RequirePermissions(PermissionAdminDashboard), monitor.New()))
-		api.Get("/auth/discord", app.authController.LoginDiscord)
+		api.Get("/auth/discord", app.authController.ServeCreateDiscordOAuthUrl)
+		api.Post("/auth/discord", app.authController.ServeAuthenticateDiscord)
 		api.Get("/download/:file_type", app.programController.Download)
+		api.Get("/profile", app.profileController.ServeProfile)
 		server.Mount("/api/", api)
 
 		server.Static("/", "./www/", fiber.Static{
@@ -89,8 +108,14 @@ func newApp(
 	return &app
 }
 
-func (a *app) ListenAndServe() {
-	a.server.Listen("127.0.0.1:2137")
+func (a *app) ListenAndServe(debug bool) {
+	var addr string
+	if debug {
+		addr = "127.0.0.1:2137"
+	} else {
+		addr = ":2137"
+	}
+	a.server.Listen(addr)
 }
 
 func (a *app) Shutdown() error {
@@ -115,6 +140,7 @@ func createServer(configure func(server *fiber.App)) *fiber.App {
 func createDbSchema(ctx context.Context, db *bun.DB) {
 	models := []interface{}{
 		(*User)(nil),
+		(*Profile)(nil),
 		(*Program)(nil),
 	}
 	for _, model := range models {
@@ -212,8 +238,8 @@ func awaitInterruption() {
 
 func main() {
 	flag.Parse()
-	verbose := os.Getenv("VERBOSE") == "true"
-	setupLogger(verbose)
+	debug := os.Getenv("DEBUG") == "true"
+	setupLogger(debug)
 	logrus.Infoln("Starting backend.")
 
 	pgDsn := os.Getenv("POSTGRES_DSN")
@@ -229,7 +255,7 @@ func main() {
 
 	logrus.Infoln("Opening database.")
 	db := openDb(context.Background(), pgDsn)
-	if verbose {
+	if debug {
 		db.AddQueryHook(bundebug.NewQueryHook(bundebug.WithVerbose(true)))
 	}
 	defer db.DB.Close()
@@ -238,8 +264,8 @@ func main() {
 	discordConfig := discordConfigFromEnv()
 
 	logrus.Infoln("Creating app.")
-	app := newApp(context.Background(), bdb, db, discordConfig, nil)
-	go app.ListenAndServe()
+	app := newApp(context.Background(), bdb, db, discordConfig, debug, nil)
+	go app.ListenAndServe(debug)
 
 	logrus.Infoln("Starting listening... To shut down use ^C")
 	awaitInterruption()

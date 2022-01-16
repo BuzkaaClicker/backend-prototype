@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -16,7 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func Test_AuthCreateUser(t *testing.T) {
+func Test_AuthLoginLogoutFlow(t *testing.T) {
 	if testing.Short() {
 		t.SkipNow()
 		return
@@ -31,6 +32,7 @@ func Test_AuthCreateUser(t *testing.T) {
 		User                   discord.User
 		UserMeErr              error
 		Validate               func(resp *http.Response, body string)
+		StatusCode             int
 	}
 
 	properUser := discord.User{Email: "e@ma.il", Username: "no email access", Id: "928592940128"}
@@ -59,26 +61,21 @@ func Test_AuthCreateUser(t *testing.T) {
 
 	validateMail := func(resp *http.Response, body string) {
 		validateEntitiesCount(false)
-		assert.Equal(fiber.StatusBadRequest, resp.StatusCode)
 		assert.Equal(fakeHttpErrorResponse("missing email"), body)
 	}
 
 	validateOAuthCode := func(resp *http.Response, body string) {
 		validateEntitiesCount(false)
-		assert.Equal(fiber.StatusUnauthorized, resp.StatusCode)
 		assert.Equal(fakeHttpErrorResponse("invalid code"), body)
 	}
 
 	validateInternalError := func(resp *http.Response, body string) {
 		validateEntitiesCount(false)
-		assert.Equal(fiber.StatusInternalServerError, resp.StatusCode)
 		assert.Equal(fakeHttpErrorResponse(fiber.ErrInternalServerError.Message), body)
 	}
 
 	validateCreated := func(resp *http.Response, body string) {
 		validateEntitiesCount(true)
-
-		assert.Equal(fiber.StatusCreated, resp.StatusCode)
 		assert.Equal(resp.Header.Get("Content-Type"), fiber.MIMEApplicationJSON, "Invalid content type")
 
 		var users []User
@@ -97,12 +94,74 @@ func Test_AuthCreateUser(t *testing.T) {
 	}
 
 	cases := []Case{
-		{Validate: validateOAuthCode, User: properUser, AccessTokenExchangeErr: discord.ErrOAuthInvalidCode},
-		{Validate: validateInternalError, User: properUser, AccessTokenExchangeErr: errors.New("unexpected error")},
-		{Validate: validateInternalError, User: properUser, UserMeErr: errors.New("unexpected error")},
-		{Validate: validateInternalError, User: properUser, UserMeErr: discord.ErrUnauthorized},
-		{Validate: validateMail, User: discord.User{Username: "no email access", Id: "2222"}},
-		{Validate: validateCreated, User: properUser},
+		{Validate: validateOAuthCode, User: properUser, AccessTokenExchangeErr: discord.ErrOAuthInvalidCode,
+			StatusCode: fiber.StatusUnauthorized},
+		{Validate: validateInternalError, User: properUser, AccessTokenExchangeErr: errors.New("unexpected error"),
+			StatusCode: fiber.StatusInternalServerError},
+		{Validate: validateInternalError, User: properUser, UserMeErr: errors.New("unexpected error"),
+			StatusCode: fiber.StatusInternalServerError},
+		{Validate: validateInternalError, User: properUser, UserMeErr: discord.ErrUnauthorized,
+			StatusCode: fiber.StatusInternalServerError},
+		{Validate: validateMail, User: discord.User{Username: "no email access", Id: "2222"},
+			StatusCode: fiber.StatusBadRequest},
+		{Validate: validateCreated, User: properUser, StatusCode: fiber.StatusCreated},
+	}
+
+	// returns accessToken on success, otherwise empty string
+	testLogin := func(tc Case) string {
+		req := httptest.NewRequest("POST", "/api/auth/discord", bytes.NewBuffer([]byte(`{"code": "21"}`)))
+		req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+		resp, err := app.server.Test(req)
+		if !assert.NoError(err) {
+			return ""
+		}
+		defer resp.Body.Close()
+		bodyBytes, err := ioutil.ReadAll(resp.Body)
+		if !assert.NoError(err) {
+			return ""
+		}
+		body := string(bodyBytes)
+		tc.Validate(resp, body)
+
+		if !assert.Equal(tc.StatusCode, resp.StatusCode) {
+			return ""
+		}
+
+		if resp.StatusCode/100 == 2 {
+			type Response struct {
+				AccessToken string `json:"accessToken"`
+			}
+			response := new(Response)
+			err := json.Unmarshal(bodyBytes, response)
+			if !assert.NoError(err) {
+				return ""
+			}
+			sessionExists, err := app.authController.SessionStore.Exists(response.AccessToken)
+			if !assert.NoError(err) {
+				return ""
+			}
+			assert.True(sessionExists)
+
+			return response.AccessToken
+		} else {
+			return ""
+		}
+	}
+
+	testLogout := func(tc Case, accessToken string) {
+		req := httptest.NewRequest("POST", "/api/auth/logout", nil)
+		req.Header.Set(fiber.HeaderAuthorization, "Bearer "+accessToken)
+		req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+		resp, err := app.server.Test(req)
+		if !assert.NoError(err) {
+			return
+		}
+		assert.Equal(fiber.StatusOK, resp.StatusCode)
+		sessionExists, err := app.authController.SessionStore.Exists(accessToken)
+		if !assert.NoError(err) {
+			return
+		}
+		assert.False(sessionExists)
 	}
 
 	caseTest := func(tc Case) {
@@ -115,20 +174,10 @@ func Test_AuthCreateUser(t *testing.T) {
 			}
 		}
 
-		req := httptest.NewRequest("POST", "/api/auth/discord", bytes.NewBuffer([]byte(`{"code": "21"}`)))
-		req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
-		resp, err := app.server.Test(req)
-		if !assert.NoError(err) {
-			return
+		accessToken := testLogin(tc)
+		if accessToken != "" {
+			testLogout(tc, accessToken)
 		}
-		defer resp.Body.Close()
-		bodyBytes, err := ioutil.ReadAll(resp.Body)
-		if !assert.NoError(err) {
-			return
-		}
-		body := string(bodyBytes)
-
-		tc.Validate(resp, body)
 	}
 
 	for _, tc := range cases {

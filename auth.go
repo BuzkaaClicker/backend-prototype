@@ -31,10 +31,15 @@ type SessionStore struct {
 }
 
 func (s *SessionStore) RegisterNew(userId int64) (*Session, error) {
-	token, err := generateSessionToken()
+	dirtyToken, err := generateSessionToken()
 	if err != nil {
 		return nil, fmt.Errorf("generate token: %w", err)
 	}
+	// replace all ":" with "_" to make our
+	// session store queries at buntdb BUNTDBinjection safe
+	// (for example, if later someone will add key "session:token:random_sufix" then
+	// without line below theorically it can overwrite this random sufix)
+	token := strings.Replace(dirtyToken, ":", "_", -1)
 
 	session := &Session{
 		UserId: userId,
@@ -52,6 +57,32 @@ func (s *SessionStore) RegisterNew(userId int64) (*Session, error) {
 		return nil, fmt.Errorf("bunt update: %w", err)
 	}
 	return session, nil
+}
+
+func (s *SessionStore) Exists(token string) (bool, error) {
+	err := s.Buntdb.View(func(tx *buntdb.Tx) error {
+		_, err := tx.Get("session:" + token)
+		return err
+	})
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, buntdb.ErrNotFound):
+		return false, nil
+	default:
+		return false, fmt.Errorf("bunt view: %w", err)
+	}
+}
+
+func (s *SessionStore) Invalidate(token string) error {
+	err := s.Buntdb.Update(func(tx *buntdb.Tx) error {
+		_, err := tx.Delete("session:" + token)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("bunt update: %w", err)
+	}
+	return nil
 }
 
 func (s *SessionStore) Authorize(ctx *fiber.Ctx) error {
@@ -157,9 +188,16 @@ func (c *AuthController) ServeAuthenticateDiscord(ctx *fiber.Ctx) error {
 		return fmt.Errorf("session register new: %w", err)
 	}
 	return ctx.Status(fiber.StatusCreated).JSON(map[string]interface{}{
-		"user_id":      session.UserId,
-		"access_token": session.Token,
-		"expires_at":   time.Now().Add(sessionTTL).Unix(),
+		"userId":      session.UserId,
+		"accessToken": session.Token,
+		"expiresAt":   time.Now().Add(sessionTTL).Unix(),
+	})
+}
+
+func (c *AuthController) ServeLogout() fiber.Handler {
+	return combineHandlers(c.SessionStore.Authorize, func(ctx *fiber.Ctx) error {
+		session := ctx.Locals(SessionKey).(*Session)
+		return c.SessionStore.Invalidate(session.Token)
 	})
 }
 

@@ -41,7 +41,7 @@ type ProfileController struct {
 }
 
 func (c *ProfileController) ServeProfile(ctx *fiber.Ctx) error {
-	userIdStr := ctx.Query("user_id")
+	userIdStr := ctx.Params("user_id")
 	if userIdStr == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "no user id")
 	}

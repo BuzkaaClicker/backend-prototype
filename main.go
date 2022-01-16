@@ -94,8 +94,10 @@ func newApp(
 			app.sessionStore.Authorize, RequirePermissions(PermissionAdminDashboard), monitor.New()))
 		api.Get("/auth/discord", app.authController.ServeCreateDiscordOAuthUrl)
 		api.Post("/auth/discord", app.authController.ServeAuthenticateDiscord)
+		api.Post("/auth/logout", app.authController.ServeLogout())
+
 		api.Get("/download/:file_type", app.programController.Download)
-		api.Get("/profile", app.profileController.ServeProfile)
+		api.Get("/profile/:user_id", app.profileController.ServeProfile)
 		server.Mount("/api/", api)
 
 		server.Static("/", "./www/", fiber.Static{

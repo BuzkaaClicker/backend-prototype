@@ -44,7 +44,7 @@ func TestProfileLookup(t *testing.T) {
 	})
 
 	t.Run("controller lookup", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/profile?user_id=1", nil)
+		req := httptest.NewRequest("GET", "/api/profile/1", nil)
 		resp, err := app.server.Test(req)
 		if !assert.NoError(err) {
 			return

@@ -23,6 +23,10 @@ type AccessTokenResponse struct {
 	TokenType    string `json:"token_type"`
 }
 
+func (r AccessTokenResponse) Token() Token {
+	return Token{Type: r.TokenType, Value: r.AccessToken }
+}
+
 func RestOAuthUrlFactory(clientId string, redirectUri string) OAuthUrlFactory {
 	return func() string {
 		loginUrl, err := url.Parse("https://discord.com/api/oauth2/authorize")

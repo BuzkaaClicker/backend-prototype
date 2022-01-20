@@ -26,6 +26,7 @@ func Test_AuthLoginLogoutFlow(t *testing.T) {
 	ctx := context.Background()
 
 	app := createTestApp()
+	app.authController.GuildMemberAdd = discord.MockGuildMemberAdd
 
 	type Case struct {
 		AccessTokenExchangeErr error
@@ -169,7 +170,7 @@ func Test_AuthLoginLogoutFlow(t *testing.T) {
 			return discord.AccessTokenResponse{}, tc.AccessTokenExchangeErr
 		}
 		app.authController.UserMeProvider = func() discord.UserMe {
-			return func(tokenType, token string) (discord.User, error) {
+			return func(token discord.Token) (discord.User, error) {
 				return tc.User, tc.UserMeErr
 			}
 		}

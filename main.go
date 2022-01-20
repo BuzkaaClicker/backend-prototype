@@ -58,9 +58,10 @@ func newApp(
 
 	app.authController = AuthController{
 		DB:                    db,
-		CreateDiscordOAuthUrl: discordConfig.OAuthUrlFactory(),
-		ExchangeAccessToken:   discordConfig.AccessTokenExchanger(),
+		CreateDiscordOAuthUrl: discordConfig.oauthUrlFactory,
+		ExchangeAccessToken:   discordConfig.accessTokenExchanger,
 		UserMeProvider:        discord.RestUserMeProvider,
+		GuildMemberAdd:        discordConfig.guildMemberAdd,
 		SessionStore:          &app.sessionStore,
 		UserStore:             &app.userStore,
 	}
@@ -198,38 +199,30 @@ type discordConfig struct {
 	redirectUri          string
 	oauthUrlFactory      discord.OAuthUrlFactory
 	accessTokenExchanger discord.AccessTokenExchanger
-}
-
-func (c discordConfig) OAuthUrlFactory() discord.OAuthUrlFactory {
-	if c.oauthUrlFactory == nil {
-		return discord.RestOAuthUrlFactory(c.clientId, c.redirectUri)
-	} else {
-		return c.oauthUrlFactory
-	}
-}
-
-func (c discordConfig) AccessTokenExchanger() discord.AccessTokenExchanger {
-	if c.oauthUrlFactory == nil {
-		return discord.RestAccessTokenExchanger(c.clientId, c.clientSecret, c.redirectUri)
-	} else {
-		return c.accessTokenExchanger
-	}
+	guildMemberAdd       discord.GuildMemberAdd
 }
 
 func discordConfigFromEnv() discordConfig {
-	clientId := os.Getenv("DISCORD_CLIENT_ID")
-	if clientId == "" {
-		logrus.Fatalln("DISCORD_CLIENT_ID not set!")
+	requireEnv := func(key string) string {
+		value := os.Getenv(key)
+		if value == "" {
+			logrus.Fatalln(key + " not set!")
+		}
+		return value
 	}
-	clientSecret := os.Getenv("DISCORD_CLIENT_SECRET")
-	if clientSecret == "" {
-		logrus.Fatalln("DISCORD_CLIENT_SECRET not set!")
+	clientId := requireEnv("DISCORD_CLIENT_ID")
+	clientSecret := requireEnv("DISCORD_CLIENT_SECRET")
+	redirectUri := requireEnv("DISCORD_AUTH_URI")
+	guildId := requireEnv("DISCORD_GUILD_ID")
+	botToken := requireEnv("DISCORD_BOT_TOKEN")
+	return discordConfig{
+		clientId,
+		clientSecret,
+		redirectUri,
+		discord.RestOAuthUrlFactory(clientId, redirectUri),
+		discord.RestAccessTokenExchanger(clientId, clientSecret, redirectUri),
+		discord.RestGuildMemberAdd(botToken, guildId),
 	}
-	redirectUri := os.Getenv("DISCORD_AUTH_URI")
-	if redirectUri == "" {
-		logrus.Fatalln("DISCORD_AUTH_URI not set!")
-	}
-	return discordConfig{clientId, clientSecret, redirectUri, nil, nil}
 }
 
 func awaitInterruption() {

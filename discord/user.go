@@ -18,12 +18,12 @@ func (u User) AvatarUrl() string {
 	return fmt.Sprintf("https://cdn.discordapp.com/avatars/%s/%s.png", u.Id, u.AvatarHash)
 }
 
-type UserMe = func(tokenType string, token string) (User, error)
+type UserMe = func(token Token) (User, error)
 
 type UserMeProvider = func() UserMe
 
 // Impl of discord rest api /user/@me
-func RestUserMe(tokenType string, token string) (User, error) {
+func RestUserMe(token Token) (User, error) {
 	agent := fiber.AcquireAgent()
 	defer fiber.ReleaseAgent(agent)
 
@@ -31,7 +31,7 @@ func RestUserMe(tokenType string, token string) (User, error) {
 	req.Header.SetMethod(fiber.MethodGet)
 	req.SetRequestURI("https://discord.com/api/users/@me")
 
-	req.Header.Set("Authorization", tokenType+" "+token)
+	req.Header.Set(fiber.HeaderAuthorization, token.String())
 
 	err := agent.Parse()
 	if err != nil {

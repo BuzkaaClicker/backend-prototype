@@ -135,6 +135,7 @@ type AuthController struct {
 	CreateDiscordOAuthUrl discord.OAuthUrlFactory
 	ExchangeAccessToken   discord.AccessTokenExchanger
 	UserMeProvider        discord.UserMeProvider
+	GuildMemberAdd        discord.GuildMemberAdd
 	SessionStore          *SessionStore
 	UserStore             *UserStore
 }
@@ -168,13 +169,23 @@ func (c *AuthController) ServeAuthenticateDiscord(ctx *fiber.Ctx) error {
 		}
 	}
 
-	dcUser, err := c.UserMeProvider()(exchange.TokenType, exchange.AccessToken)
+	dcUser, err := c.UserMeProvider()(exchange.Token())
 	if err != nil {
 		return fmt.Errorf("discord user me: %w", err)
 	}
 	if dcUser.Email == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "missing email")
 	}
+
+	guildAddStatus, err := c.GuildMemberAdd(exchange.AccessToken, dcUser.Id); 
+	if err != nil {
+		if errors.Is(err, discord.ErrUnauthorized) {
+			return fiber.NewError(fiber.StatusUnauthorized, "discord guild join unauthorized")
+		} else {
+			return err
+		}
+	}
+	requestLog(ctx).Infof("Discord guild member add status: %d\n", guildAddStatus)
 
 	dbCtx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
 	user, err := c.UserStore.RegisterDiscordUser(dbCtx, dcUser, exchange.RefreshToken)

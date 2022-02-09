@@ -1,4 +1,4 @@
-package main
+package user
 
 import (
 	"context"
@@ -7,29 +7,30 @@ import (
 	"time"
 
 	"github.com/buzkaaclicker/backend/discord"
+	"github.com/buzkaaclicker/backend/profile"
 	"github.com/uptrace/bun"
 )
 
-const UserKey = "user"
+const LocalsKey = "user"
 
-type User struct {
+type Model struct {
 	bun.BaseModel `bun:"table:user"`
 
-	Id                  int64     `bun:",pk,autoincrement" json:"-"`
-	CreatedAt           time.Time `bun:",nullzero,notnull,default:current_timestamp" json:"-"`
-	RolesNames          []RoleId  `bun:",notnull,array" json:"-"`
-	DiscordId           string    `bun:",notnull,unique" json:"-"`
-	DiscordRefreshToken string    `bun:",notnull" json:"-"`
-	Email               string    `bun:"email,notnull" json:"-"`
-	Profile             *Profile  `bun:"rel:has-one,join:id=user_id"`
+	Id                  int64          `bun:",pk,autoincrement" json:"-"`
+	CreatedAt           time.Time      `bun:",nullzero,notnull,default:current_timestamp" json:"-"`
+	RolesNames          []RoleId       `bun:",notnull,array" json:"-"`
+	DiscordId           string         `bun:",notnull,unique" json:"-"`
+	DiscordRefreshToken string         `bun:",notnull" json:"-"`
+	Email               string         `bun:"email,notnull" json:"-"`
+	Profile             *profile.Model `bun:"rel:has-one,join:id=user_id"`
 
 	// Mapped (in AfterScanRow hook) roles from RolesNames.
 	Roles Roles `bun:"-"`
 }
 
-var _ bun.AfterScanRowHook = (*User)(nil)
+var _ bun.AfterScanRowHook = (*Model)(nil)
 
-func (u *User) AfterScanRow(ctx context.Context) error {
+func (u *Model) AfterScanRow(ctx context.Context) error {
 	u.Roles = make(Roles, 0, len(u.RolesNames))
 	for _, n := range u.RolesNames {
 		role, ok := AllRoles[n]
@@ -40,13 +41,13 @@ func (u *User) AfterScanRow(ctx context.Context) error {
 	return nil
 }
 
-type UserStore struct {
+type Store struct {
 	DB *bun.DB
 }
 
-func (s *UserStore) RegisterDiscordUser(ctx context.Context,
-	dcUser discord.User, refreshToken string) (*User, error) {
-	user := &User{
+func (s *Store) RegisterDiscordUser(ctx context.Context,
+	dcUser discord.User, refreshToken string) (*Model, error) {
+	user := &Model{
 		DiscordId:           dcUser.Id,
 		DiscordRefreshToken: refreshToken,
 		Email:               dcUser.Email,
@@ -63,7 +64,7 @@ func (s *UserStore) RegisterDiscordUser(ctx context.Context,
 			return fmt.Errorf("insert user: %w", err)
 		}
 
-		profile := &Profile{
+		profile := &profile.Model{
 			UserId:    user.Id,
 			Name:      dcUser.Username,
 			AvatarUrl: dcUser.AvatarUrl(),
@@ -84,11 +85,11 @@ func (s *UserStore) RegisterDiscordUser(ctx context.Context,
 	return user, nil
 }
 
-func (s *UserStore) ById(ctx context.Context, userId int64) (*User, error) {
-	user := new(User)
+func (s *Store) ById(ctx context.Context, userId int64) (*Model, error) {
+	user := new(Model)
 	err := s.DB.NewSelect().
 		Model(user).
-		Where(`"user"."id"=?`, userId).
+		Where(`"model"."id"=?`, userId).
 		Relation("Profile").
 		Scan(ctx)
 	if err != nil {

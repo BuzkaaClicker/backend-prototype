@@ -6,12 +6,14 @@ import (
 	"log/syslog"
 	"os"
 	"os/signal"
-	"reflect"
 	"time"
 
-	"database/sql"
-
 	"github.com/buzkaaclicker/backend/discord"
+	"github.com/buzkaaclicker/backend/pgdb"
+	"github.com/buzkaaclicker/backend/profile"
+	"github.com/buzkaaclicker/backend/program"
+	"github.com/buzkaaclicker/backend/rest"
+	"github.com/buzkaaclicker/backend/user"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/monitor"
@@ -19,140 +21,74 @@ import (
 	logrusys "github.com/sirupsen/logrus/hooks/syslog"
 	"github.com/tidwall/buntdb"
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/dialect/pgdialect"
 	_ "github.com/uptrace/bun/driver/pgdriver"
 	"github.com/uptrace/bun/extra/bundebug"
 )
 
-type app struct {
-	bdb               *buntdb.DB
-	db                *bun.DB
-	userStore         UserStore
-	profileStore      ProfileStore
-	sessionStore      SessionStore
-	authController    AuthController
-	programRepo       ProgramRepo
-	programController ProgramController
-	profileController ProfileController
-	server            *fiber.App
-}
-
-func newApp(
+func listenAndServe(
 	ctx context.Context,
 	bdb *buntdb.DB,
 	db *bun.DB,
 	discordConfig discordConfig,
 	debug bool,
-	// Called right before server registers not found handler at end of the route stack.
-	// Required by tests to register their custom test routes.
-	configureServer func(app *app),
-) *app {
-	createDbSchema(ctx, db)
+) func() error {
+	userStore := user.Store{DB: db}
+	profileStore := profile.Store{DB: db}
+	sessionStore := user.SessionStore{Buntdb: bdb, UserStore: &userStore}
 
-	var app app
-	app.bdb = bdb
-	app.db = db
-	app.userStore = UserStore{DB: db}
-	app.profileStore = ProfileStore{DB: db}
-	app.sessionStore = SessionStore{Buntdb: bdb, UserStore: &app.userStore}
-
-	app.authController = AuthController{
+	authController := user.AuthController{
 		DB:                    db,
 		CreateDiscordOAuthUrl: discordConfig.oauthUrlFactory,
 		ExchangeAccessToken:   discordConfig.accessTokenExchanger,
 		UserMeProvider:        discord.RestUserMeProvider,
 		GuildMemberAdd:        discordConfig.guildMemberAdd,
-		SessionStore:          &app.sessionStore,
-		UserStore:             &app.userStore,
+		SessionStore:          &sessionStore,
+		UserStore:             &userStore,
 	}
 
-	app.programRepo = &PgProgramRepo{DB: db}
-	app.programController = ProgramController{Repo: app.programRepo}
-	app.profileController = ProfileController{ProfileStore: app.profileStore}
+	programRepo := &program.PgRepo{DB: db}
+	programController := program.Controller{Repo: programRepo}
+	profileController := profile.Controller{Store: profileStore}
 
-	createServer(func(server *fiber.App) {
-		app.server = server
+	server := fiber.New()
+	server.Use(logHandler())
 
-		server.Use(logHandler())
-
-		if configureServer != nil {
-			configureServer(&app)
-		}
-
-		api := fiber.New(fiber.Config{
-			ReadTimeout:  10 * time.Second,
-			WriteTimeout: 10 * time.Second,
-			ErrorHandler: restErrorHandler,
-		})
-
-		allowOrigins := "https://buzkaaclicker.pl"
-		if debug {
-			allowOrigins += ", http://test.buzkaaclicker.pl:3000"
-		}
-		api.Use(cors.New(cors.Config{AllowOrigins: allowOrigins}))
-
-		api.Get("/status", combineHandlers(
-			app.sessionStore.Authorize, RequirePermissions(PermissionAdminDashboard), monitor.New()))
-		api.Get("/auth/discord", app.authController.ServeCreateDiscordOAuthUrl)
-		api.Post("/auth/discord", app.authController.ServeAuthenticateDiscord)
-		api.Post("/auth/logout", app.authController.ServeLogout())
-
-		api.Get("/download/:file_type", app.programController.Download)
-		api.Get("/profile/:user_id", app.profileController.ServeProfile)
-		server.Mount("/api/", api)
-
-		server.Static("/", "./www/", fiber.Static{
-			Browse: false,
-			Index:  "index.html",
-		})
-
-		server.Use(notFoundHandler)
+	api := fiber.New(fiber.Config{
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		ErrorHandler: rest.ErrorHandler,
 	})
-	return &app
-}
 
-func (a *app) ListenAndServe(debug bool) {
+	allowOrigins := "https://buzkaaclicker.pl"
+	if debug {
+		allowOrigins += ", http://test.buzkaaclicker.pl:3000"
+	}
+	api.Use(cors.New(cors.Config{AllowOrigins: allowOrigins}))
+
+	api.Get("/status", rest.CombineHandlers(
+		sessionStore.Authorize, user.RequirePermissions(user.PermissionAdminDashboard), monitor.New()))
+	authController.InstallTo(api)
+	programController.InstallTo(api)
+	profileController.InstallTo(api)
+	server.Mount("/api/", api)
+
+	server.Static("/", "./www/", fiber.Static{
+		Browse: false,
+		Index:  "index.html",
+	})
+
+	server.Use(rest.NotFoundHandler)
+
 	var addr string
 	if debug {
 		addr = "127.0.0.1:2137"
 	} else {
 		addr = ":2137"
 	}
-	a.server.Listen(addr)
-}
+	go server.Listen(addr)
 
-func (a *app) Shutdown() error {
-	return a.server.Shutdown()
-}
-
-func createServer(configure func(server *fiber.App)) *fiber.App {
-	server := fiber.New(fiber.Config{
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
-		ErrorHandler: restErrorHandler,
-	})
-	server.Server().MaxConnsPerIP = 20
-	server.Use(logHandler())
-
-	configure(server)
-
-	server.Use(notFoundHandler)
-	return server
-}
-
-func createDbSchema(ctx context.Context, db *bun.DB) {
-	models := []interface{}{
-		(*User)(nil),
-		(*Profile)(nil),
-		(*Program)(nil),
-	}
-	for _, model := range models {
-		modelType := reflect.TypeOf(model)
-		logrus.WithField("model", modelType).Debugln("Creating table.")
-		_, err := db.NewCreateTable().IfNotExists().Model(model).Exec(ctx)
-		if err != nil {
-			logrus.WithField("model", modelType).WithError(err).Fatalln("Could not create table.")
-		}
+	return func() error {
+		return server.Shutdown()
 	}
 }
 
@@ -173,22 +109,9 @@ func setupLogger(verbose bool) {
 	logrus.AddHook(syslogHook)
 }
 
-func openDb(ctx context.Context, pgDsn string) *bun.DB {
-	sqldb, err := sql.Open("pg", pgDsn)
-	if err != nil {
-		logrus.WithError(err).Fatalln("Database open failed.")
-	}
-	err = sqldb.Ping()
-	if err != nil {
-		logrus.WithError(err).Fatalln("Could not ping database.")
-	}
-	db := bun.NewDB(sqldb, pgdialect.New())
-	return db
-}
-
 func logHandler() fiber.Handler {
 	return func(ctx *fiber.Ctx) error {
-		requestLog(ctx).Infoln("Handling request.")
+		rest.RequestLog(ctx).Infoln("Handling request.")
 		return ctx.Next()
 	}
 }
@@ -249,7 +172,7 @@ func main() {
 	defer bdb.Close()
 
 	logrus.Infoln("Opening database.")
-	db := openDb(context.Background(), pgDsn)
+	db := pgdb.Open(context.Background(), pgDsn)
 	if debug {
 		db.AddQueryHook(bundebug.NewQueryHook(bundebug.WithVerbose(true)))
 	}
@@ -258,15 +181,13 @@ func main() {
 
 	discordConfig := discordConfigFromEnv()
 
-	logrus.Infoln("Creating app.")
-	app := newApp(context.Background(), bdb, db, discordConfig, debug, nil)
-	go app.ListenAndServe(debug)
-
 	logrus.Infoln("Starting listening... To shut down use ^C")
+	shutdown := listenAndServe(context.Background(), bdb, db, discordConfig, debug)
+
 	awaitInterruption()
 
 	logrus.Infoln("Shutting down...")
-	err = app.Shutdown()
+	err = shutdown()
 	if err != nil {
 		logrus.WithError(err).Warningln("Fiber shutdown failed.")
 	}

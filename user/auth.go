@@ -1,4 +1,4 @@
-package main
+package user
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/buzkaaclicker/backend/discord"
+	"github.com/buzkaaclicker/backend/rest"
 	"github.com/gofiber/fiber/v2"
 	"github.com/tidwall/buntdb"
 	"github.com/uptrace/bun"
@@ -27,7 +28,7 @@ type Session struct {
 
 type SessionStore struct {
 	Buntdb    *buntdb.DB
-	UserStore *UserStore
+	UserStore *Store
 }
 
 func (s *SessionStore) RegisterNew(userId int64) (*Session, error) {
@@ -121,12 +122,12 @@ func (s *SessionStore) Authorize(ctx *fiber.Ctx) error {
 		return fmt.Errorf("retrieve user by id: %w", err)
 	}
 
-	requestLog(ctx).
+	rest.RequestLog(ctx).
 		WithField("user_id", userId).
 		Infoln("Authorized access.")
 
 	ctx.Locals(SessionKey, session)
-	ctx.Locals(UserKey, user)
+	ctx.Locals(LocalsKey, user)
 	return nil
 }
 
@@ -137,22 +138,28 @@ type AuthController struct {
 	UserMeProvider        discord.UserMeProvider
 	GuildMemberAdd        discord.GuildMemberAdd
 	SessionStore          *SessionStore
-	UserStore             *UserStore
+	UserStore             *Store
 }
 
-func (c *AuthController) ServeCreateDiscordOAuthUrl(ctx *fiber.Ctx) error {
+func (c *AuthController) InstallTo(app *fiber.App) {
+	app.Get("/auth/discord", c.serveCreateDiscordOAuthUrl)
+	app.Post("/auth/discord", c.serveAuthenticateDiscord)
+	app.Post("/auth/logout", c.logoutHandler())
+}
+
+func (c *AuthController) serveCreateDiscordOAuthUrl(ctx *fiber.Ctx) error {
 	url := c.CreateDiscordOAuthUrl()
 	return ctx.JSON(map[string]string{
 		"url": url,
 	})
 }
 
-func (c *AuthController) ServeAuthenticateDiscord(ctx *fiber.Ctx) error {
+func (c *AuthController) serveAuthenticateDiscord(ctx *fiber.Ctx) error {
 	body := struct {
 		Code string `json:"code"`
 	}{}
 	if err := ctx.BodyParser(&body); err != nil {
-		requestLog(ctx).WithError(err).Infoln("Invalid body.")
+		rest.RequestLog(ctx).WithError(err).Infoln("Invalid body.")
 		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
 	}
 	code := body.Code
@@ -185,7 +192,7 @@ func (c *AuthController) ServeAuthenticateDiscord(ctx *fiber.Ctx) error {
 			return err
 		}
 	}
-	requestLog(ctx).Infof("Discord guild member add status: %d\n", guildAddStatus)
+	rest.RequestLog(ctx).Infof("Discord guild member add status: %d\n", guildAddStatus)
 
 	dbCtx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
 	user, err := c.UserStore.RegisterDiscordUser(dbCtx, dcUser, exchange.RefreshToken)
@@ -205,8 +212,8 @@ func (c *AuthController) ServeAuthenticateDiscord(ctx *fiber.Ctx) error {
 	})
 }
 
-func (c *AuthController) ServeLogout() fiber.Handler {
-	return combineHandlers(c.SessionStore.Authorize, func(ctx *fiber.Ctx) error {
+func (c *AuthController) logoutHandler() fiber.Handler {
+	return rest.CombineHandlers(c.SessionStore.Authorize, func(ctx *fiber.Ctx) error {
 		session := ctx.Locals(SessionKey).(*Session)
 		return c.SessionStore.Invalidate(session.Token)
 	})

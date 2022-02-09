@@ -1,10 +1,11 @@
-package main
+package user
 
 import (
 	"context"
 	"testing"
 
 	"github.com/buzkaaclicker/backend/discord"
+	"github.com/buzkaaclicker/backend/pgdb"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -16,16 +17,17 @@ func TestUserRoles(t *testing.T) {
 	assert := assert.New(t)
 	ctx := context.Background()
 
-	app := createTestApp()
+	db := pgdb.OpenTest(ctx)
+	defer db.Close()
 
-	_, err := app.db.NewCreateTable().
+	_, err := db.NewCreateTable().
 		IfNotExists().
-		Model((*User)(nil)).
+		Model((*Model)(nil)).
 		Exec(ctx)
 	assert.NoError(err)
 
-	_, err = app.db.NewInsert().
-		Model(&User{
+	_, err = db.NewInsert().
+		Model(&Model{
 			DiscordId:           "123",
 			DiscordRefreshToken: "123",
 			Email:               "user@rol.es",
@@ -34,9 +36,9 @@ func TestUserRoles(t *testing.T) {
 		Exec(ctx)
 	assert.NoError(err)
 
-	var user User
-	err = app.db.NewSelect().
-		Model((*User)(nil)).
+	var user Model
+	err = db.NewSelect().
+		Model((*Model)(nil)).
 		Where("email=?", "user@rol.es").
 		Scan(ctx, &user)
 	assert.NoError(err)
@@ -55,7 +57,9 @@ func TestRegisterDiscordUser(t *testing.T) {
 	assert := assert.New(t)
 	ctx := context.Background()
 
-	app := createTestApp()
+	db := pgdb.OpenTest(ctx)
+	defer db.Close()
+	store := Store{DB: db}
 
 	discordUser := discord.User{
 		Id:         "snowflake",
@@ -64,7 +68,7 @@ func TestRegisterDiscordUser(t *testing.T) {
 		AvatarHash: "f2789ef0ddaee56d91a782fa530b0009",
 	}
 	refreshToken := "21gokpoasio57"
-	user, err := app.userStore.RegisterDiscordUser(ctx, discordUser, refreshToken)
+	user, err := store.RegisterDiscordUser(ctx, discordUser, refreshToken)
 	if !assert.NoError(err) {
 		return
 	}
@@ -72,7 +76,7 @@ func TestRegisterDiscordUser(t *testing.T) {
 	assert.Equal(refreshToken, user.DiscordRefreshToken)
 	assert.Equal(discordUser.Email, user.Email)
 
-	userSel, err := app.userStore.ById(ctx, user.Id)
+	userSel, err := store.ById(ctx, user.Id)
 	if !assert.NoError(err) {
 		return
 	}

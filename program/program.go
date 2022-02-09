@@ -1,4 +1,4 @@
-package main
+package program
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 var ErrProgramNotFound = errors.New("program not found")
 
 // Single program file e.g. installer, config.yml, buzkaaclickeragent.dll.
-type ProgramFile struct {
+type File struct {
 	// Relative file path in BuzkaaClicker directory.
 	Path string `json:"path"`
 	// Download url.
@@ -24,8 +24,8 @@ type ProgramFile struct {
 	Hash string `json:"hash"`
 }
 
-// Program model representing database entity and rest json DTO.
-type Program struct {
+// Model model representing database entity and rest json DTO.
+type Model struct {
 	bun.BaseModel `bun:"table:program" json:"-"`
 
 	Id          int           `bun:",pk,autoincrement"                            json:"id"`
@@ -35,15 +35,19 @@ type Program struct {
 	OS          string        `bun:",notnull,unique:build_type,type:varchar(30)"  json:"os"`
 	Arch        string        `bun:",notnull,unique:build_type,type:varchar(10)"  json:"arch"`
 	Branch      string        `bun:",notnull,unique:build_type,type:varchar(255)" json:"branch"`
-	Files       []ProgramFile `bun:""                                             json:"files"`
+	Files       []File `bun:""                                             json:"files"`
 }
 
-type ProgramController struct {
-	Repo ProgramRepo
+type Controller struct {
+	Repo Repo
+}
+
+func (c *Controller) InstallTo(app *fiber.App) {
+	app.Get("/download/:file_type", c.download)
 }
 
 // type, arch, os, branch
-func (c *ProgramController) Download(ctx *fiber.Ctx) error {
+func (c *Controller) download(ctx *fiber.Ctx) error {
 	fileType := ctx.Params("file_type", "installer")
 	os := ctx.Query("os")
 	arch := ctx.Query("arch")
@@ -65,18 +69,18 @@ func (c *ProgramController) Download(ctx *fiber.Ctx) error {
 	return nil
 }
 
-type ProgramRepo interface {
+type Repo interface {
 	// Get latest program files matching specified arguments.
 	LatestProgramFiles(ctx context.Context, fileType string,
-		os string, arch string, branch string) ([]ProgramFile, error)
+		os string, arch string, branch string) ([]File, error)
 }
 
-type PgProgramRepo struct {
+type PgRepo struct {
 	DB *bun.DB
 }
 
-func (repo PgProgramRepo) LatestProgramFiles(ctx context.Context, fileType string,
-	os string, arch string, branch string) ([]ProgramFile, error) {
+func (repo PgRepo) LatestProgramFiles(ctx context.Context, fileType string,
+	os string, arch string, branch string) ([]File, error) {
 	subq := repo.DB.NewSelect().
 		ColumnExpr("*").
 		ColumnExpr("row_number() over(partition by type, os, arch, branch order by id desc) as _row_number").
@@ -86,7 +90,7 @@ func (repo PgProgramRepo) LatestProgramFiles(ctx context.Context, fileType strin
 		Where("arch=?", arch).
 		Where("branch=?", branch)
 
-	var files [][]ProgramFile
+	var files [][]File
 	err := repo.DB.NewSelect().
 		TableExpr("(?) as t", subq).
 		Where("t._row_number = 1").

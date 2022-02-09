@@ -1,4 +1,4 @@
-package main
+package user
 
 import (
 	"github.com/gofiber/fiber/v2"
@@ -93,7 +93,7 @@ func (roles Roles) Access(permission PermissionName) Access {
 
 func RequirePermissions(permission PermissionName) fiber.Handler {
 	return func(ctx *fiber.Ctx) error {
-		user, ok := ctx.Locals(UserKey).(*User)
+		user, ok := ctx.Locals(LocalsKey).(*Model)
 		if !ok {
 			return fiber.ErrUnauthorized
 		}

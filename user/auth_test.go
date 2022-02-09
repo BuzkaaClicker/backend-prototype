@@ -1,4 +1,4 @@
-package main
+package user
 
 import (
 	"bytes"
@@ -13,8 +13,11 @@ import (
 	"testing"
 
 	"github.com/buzkaaclicker/backend/discord"
+	"github.com/buzkaaclicker/backend/pgdb"
+	"github.com/buzkaaclicker/backend/rest"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
+	"github.com/tidwall/buntdb"
 )
 
 func Test_AuthLoginLogoutFlow(t *testing.T) {
@@ -25,8 +28,24 @@ func Test_AuthLoginLogoutFlow(t *testing.T) {
 	assert := assert.New(t)
 	ctx := context.Background()
 
-	app := createTestApp()
-	app.authController.GuildMemberAdd = discord.MockGuildMemberAdd
+	db := pgdb.OpenTest(ctx)
+	defer db.Close()
+	app := fiber.New(fiber.Config{ErrorHandler: rest.ErrorHandler})
+
+	bdb, err := buntdb.Open(":memory:")
+	if err != nil {
+		panic(err)
+	}
+	defer bdb.Close()
+
+	userStore := &Store{DB: db}
+	authController := AuthController{
+		DB: db,
+		UserStore: userStore,
+		SessionStore: &SessionStore{Buntdb: bdb, UserStore: userStore},
+		GuildMemberAdd: discord.MockGuildMemberAdd,
+	}
+	authController.InstallTo(app)
 
 	type Case struct {
 		AccessTokenExchangeErr error
@@ -40,9 +59,9 @@ func Test_AuthLoginLogoutFlow(t *testing.T) {
 
 	// :D EXPECTED ALBO NIE bool == int1 :D
 	validateEntitiesCount := func(expectedCount bool) {
-		var users []User
-		err := app.db.NewSelect().
-			Model((*User)(nil)).
+		var users []Model
+		err := db.NewSelect().
+			Model((*Model)(nil)).
 			Where("discord_id=?", properUser.Id).
 			Scan(ctx, &users)
 		if !assert.NoError(err) {
@@ -62,26 +81,26 @@ func Test_AuthLoginLogoutFlow(t *testing.T) {
 
 	validateMail := func(resp *http.Response, body string) {
 		validateEntitiesCount(false)
-		assert.Equal(fakeHttpErrorResponse("missing email"), body)
+		assert.Equal(rest.JsonErrorMessageResponse("missing email"), body)
 	}
 
 	validateOAuthCode := func(resp *http.Response, body string) {
 		validateEntitiesCount(false)
-		assert.Equal(fakeHttpErrorResponse("invalid code"), body)
+		assert.Equal(rest.JsonErrorMessageResponse("invalid code"), body)
 	}
 
 	validateInternalError := func(resp *http.Response, body string) {
 		validateEntitiesCount(false)
-		assert.Equal(fakeHttpErrorResponse(fiber.ErrInternalServerError.Message), body)
+		assert.Equal(rest.JsonErrorMessageResponse(fiber.ErrInternalServerError.Message), body)
 	}
 
 	validateCreated := func(resp *http.Response, body string) {
 		validateEntitiesCount(true)
 		assert.Equal(resp.Header.Get("Content-Type"), fiber.MIMEApplicationJSON, "Invalid content type")
 
-		var users []User
-		err := app.db.NewSelect().
-			Model((*User)(nil)).
+		var users []Model
+		err := db.NewSelect().
+			Model((*Model)(nil)).
 			Where("discord_id=?", properUser.Id).
 			Scan(ctx, &users)
 		if !assert.NoError(err) {
@@ -110,9 +129,9 @@ func Test_AuthLoginLogoutFlow(t *testing.T) {
 
 	// returns accessToken on success, otherwise empty string
 	testLogin := func(tc Case) string {
-		req := httptest.NewRequest("POST", "/api/auth/discord", bytes.NewBuffer([]byte(`{"code": "21"}`)))
+		req := httptest.NewRequest("POST", "/auth/discord", bytes.NewBuffer([]byte(`{"code": "21"}`)))
 		req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
-		resp, err := app.server.Test(req)
+		resp, err := app.Test(req)
 		if !assert.NoError(err) {
 			return ""
 		}
@@ -137,7 +156,7 @@ func Test_AuthLoginLogoutFlow(t *testing.T) {
 			if !assert.NoError(err) {
 				return ""
 			}
-			sessionExists, err := app.authController.SessionStore.Exists(response.AccessToken)
+			sessionExists, err := authController.SessionStore.Exists(response.AccessToken)
 			if !assert.NoError(err) {
 				return ""
 			}
@@ -150,15 +169,15 @@ func Test_AuthLoginLogoutFlow(t *testing.T) {
 	}
 
 	testLogout := func(tc Case, accessToken string) {
-		req := httptest.NewRequest("POST", "/api/auth/logout", nil)
+		req := httptest.NewRequest("POST", "/auth/logout", nil)
 		req.Header.Set(fiber.HeaderAuthorization, "Bearer "+accessToken)
 		req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
-		resp, err := app.server.Test(req)
+		resp, err := app.Test(req)
 		if !assert.NoError(err) {
 			return
 		}
 		assert.Equal(fiber.StatusOK, resp.StatusCode)
-		sessionExists, err := app.authController.SessionStore.Exists(accessToken)
+		sessionExists, err := authController.SessionStore.Exists(accessToken)
 		if !assert.NoError(err) {
 			return
 		}
@@ -166,10 +185,10 @@ func Test_AuthLoginLogoutFlow(t *testing.T) {
 	}
 
 	caseTest := func(tc Case) {
-		app.authController.ExchangeAccessToken = func(code string) (discord.AccessTokenResponse, error) {
+		authController.ExchangeAccessToken = func(code string) (discord.AccessTokenResponse, error) {
 			return discord.AccessTokenResponse{}, tc.AccessTokenExchangeErr
 		}
-		app.authController.UserMeProvider = func() discord.UserMe {
+		authController.UserMeProvider = func() discord.UserMe {
 			return func(token discord.Token) (discord.User, error) {
 				return tc.User, tc.UserMeErr
 			}
@@ -208,18 +227,31 @@ func Test_SessionAuthorization(t *testing.T) {
 		return err
 	}
 
-	app := createTestApp(func(app *app) {
-		app.server.Get("/test/restricted", combineHandlers(app.sessionStore.Authorize, restrictedHandler))
-		app.server.Get("/test/dashboard", combineHandlers(app.sessionStore.Authorize, RequirePermissions(PermissionAdminDashboard),
-			restrictedHandler))
-	})
+	db := pgdb.OpenTest(context.Background())
+	bdb, err := buntdb.Open(":memory:")
+	if err != nil {
+		panic(err)
+	}
+	userStore := &Store{DB: db}
+	sessionStore := &SessionStore{
+		Buntdb: bdb,
+		UserStore: userStore,
+	}
+	controller := AuthController{
+		DB: db,
+		UserStore: userStore,
+	}
 
-	registerUser := func(discordUser discord.User) (*User, *Session, error) {
-		user, err := app.userStore.RegisterDiscordUser(context.Background(), discordUser, "refresh-token-mock")
+	app := fiber.New(fiber.Config{ErrorHandler: rest.ErrorHandler})
+	app.Get("/test/restricted", rest.CombineHandlers(sessionStore.Authorize, restrictedHandler))
+	app.Get("/test/dashboard", rest.CombineHandlers(sessionStore.Authorize, RequirePermissions(PermissionAdminDashboard), restrictedHandler))
+
+	registerUser := func(discordUser discord.User) (*Model, *Session, error) {
+		user, err := userStore.RegisterDiscordUser(context.Background(), discordUser, "refresh-token-mock")
 		if err != nil {
 			return nil, nil, fmt.Errorf("register user: %w", err)
 		}
-		session, err := app.sessionStore.RegisterNew(user.Id)
+		session, err := sessionStore.RegisterNew(user.Id)
 		if err != nil {
 			return nil, nil, fmt.Errorf("register session: %w", err)
 		}
@@ -238,7 +270,7 @@ func Test_SessionAuthorization(t *testing.T) {
 		return
 	}
 	privilegedUser.RolesNames = append(privilegedUser.RolesNames, RoleIdAdmin)
-	_, err = app.db.NewUpdate().
+	_, err = db.NewUpdate().
 		Model(privilegedUser).
 		Where("id=?", privilegedUser.Id).
 		Exec(context.Background())
@@ -262,36 +294,36 @@ func Test_SessionAuthorization(t *testing.T) {
 		{
 			path:             "/test/restricted",
 			token:            "",
-			expectedResponse: fakeHttpErrorResponse(fiber.ErrUnauthorized.Message),
+			expectedResponse: rest.JsonErrorMessageResponse(fiber.ErrUnauthorized.Message),
 		},
 		{
 			path:             "/test/restricted",
 			token:            "unexisting_session_token",
 			tokenType:        "Bearer",
-			expectedResponse: fakeHttpErrorResponse(fiber.ErrUnauthorized.Message),
+			expectedResponse: rest.JsonErrorMessageResponse(fiber.ErrUnauthorized.Message),
 		},
 		{
 			path:             "/test/restricted",
 			token:            "basic_is_not_a_valid_auth_type",
 			tokenType:        "Basic",
-			expectedResponse: fakeHttpErrorResponse("invalid auth type"),
+			expectedResponse: rest.JsonErrorMessageResponse("invalid auth type"),
 		},
 		// permission cases
 		{
 			path:             "/test/dashboard",
 			token:            unprivilegedSession.Token,
 			tokenType:        "Bearer",
-			expectedResponse: fakeHttpErrorResponse(fiber.ErrUnauthorized.Message),
+			expectedResponse: rest.JsonErrorMessageResponse(fiber.ErrUnauthorized.Message),
 		},
 		{
 			path:             "/test/dashboard",
 			token:            "",
-			expectedResponse: fakeHttpErrorResponse(fiber.ErrUnauthorized.Message),
+			expectedResponse: rest.JsonErrorMessageResponse(fiber.ErrUnauthorized.Message),
 		},
 		{
 			path:             "/test/dashboard",
 			token:            "not existing token",
-			expectedResponse: fakeHttpErrorResponse("invalid auth type"),
+			expectedResponse: rest.JsonErrorMessageResponse("invalid auth type"),
 		},
 		{
 			path:             "/test/dashboard",
@@ -301,7 +333,7 @@ func Test_SessionAuthorization(t *testing.T) {
 		},
 	}
 
-	app.authController.ExchangeAccessToken = func(code string) (discord.AccessTokenResponse, error) {
+	controller.ExchangeAccessToken = func(code string) (discord.AccessTokenResponse, error) {
 		return discord.AccessTokenResponse{RefreshToken: "mock_refresh_token"}, nil
 	}
 
@@ -310,7 +342,7 @@ func Test_SessionAuthorization(t *testing.T) {
 		if tc.token != "" {
 			req.Header.Set("Authorization", tc.tokenType+" "+tc.token)
 		}
-		resp, err := app.server.Test(req)
+		resp, err := app.Test(req)
 		if !assert.NoError(err) {
 			return
 		}

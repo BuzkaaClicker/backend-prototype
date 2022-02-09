@@ -1,4 +1,4 @@
-package main
+package profile
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"github.com/uptrace/bun"
 )
 
-type Profile struct {
+type Model struct {
 	bun.BaseModel `bun:"table:profile"`
 
 	Id        int64  `json:"-" bun:",pk,autoincrement"`
@@ -20,12 +20,12 @@ type Profile struct {
 	AvatarUrl string `json:"avatarUrl"`
 }
 
-type ProfileStore struct {
+type Store struct {
 	DB *bun.DB
 }
 
-func (s *ProfileStore) ByUserId(ctx context.Context, userId int64) (*Profile, error) {
-	profile := new(Profile)
+func (s *Store) ByUserId(ctx context.Context, userId int64) (*Model, error) {
+	profile := new(Model)
 	err := s.DB.NewSelect().
 		Model(profile).
 		Where(`user_id=?`, userId).
@@ -36,11 +36,15 @@ func (s *ProfileStore) ByUserId(ctx context.Context, userId int64) (*Profile, er
 	return profile, nil
 }
 
-type ProfileController struct {
-	ProfileStore ProfileStore
+type Controller struct {
+	Store Store
 }
 
-func (c *ProfileController) ServeProfile(ctx *fiber.Ctx) error {
+func (c *Controller) InstallTo(app *fiber.App) {
+	app.Get("/profile/:user_id", c.serveProfile)
+}
+
+func (c *Controller) serveProfile(ctx *fiber.Ctx) error {
 	userIdStr := ctx.Params("user_id")
 	if userIdStr == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "no user id")
@@ -50,7 +54,7 @@ func (c *ProfileController) ServeProfile(ctx *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid user id")
 	}
 
-	profile, err := c.ProfileStore.ByUserId(ctx.Context(), int64(userId))
+	profile, err := c.Store.ByUserId(ctx.Context(), int64(userId))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fiber.NewError(fiber.StatusNotFound, "profile not found")

@@ -71,11 +71,11 @@ func Test_AuthLoginLogoutFlow(t *testing.T) {
 		assert.Equal(user.Discord.Id, properUser.Id)
 		assert.Equal(string(user.Email), properUser.Email)
 
-		logs, err := activityStore.ByUserId(ctx, user.Id)
+		logs, err := activityStore.ByUserId(ctx, user.Id, -1, 100)
 		if !assert.NoError(err) || !assert.GreaterOrEqual(len(logs), 1) {
 			return
 		}
-		assert.Equal("session_created", logs[len(logs)-1].Name)
+		assert.Equal("session_created", logs[0].Name)
 	}
 
 	cases := []Case{

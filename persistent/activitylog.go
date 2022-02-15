@@ -49,12 +49,28 @@ func (s *ActivityStore) AddLog(ctx context.Context, userId buzza.UserId, activit
 	return nil
 }
 
-func (s *ActivityStore) ByUserId(ctx context.Context, userId buzza.UserId) ([]buzza.ActivityLog, error) {
+func (s *ActivityStore) ByUserId(ctx context.Context, userId buzza.UserId, beforeId int64, limit int32) ([]buzza.ActivityLog, error) {
+	if limit <= 0 {
+		return []buzza.ActivityLog{}, nil
+	}
+
 	var logs []ActivityLog
-	err := s.DB.NewSelect().
-		Model((*ActivityLog)(nil)).
-		Where("activity_log.user_id=?", userId).
-		Scan(ctx, &logs)
+	var err error
+	if beforeId >= 0 {
+		err = s.DB.NewSelect().
+			Model((*ActivityLog)(nil)).
+			Where("user_id=? AND id < ?", userId, beforeId).
+			Order("id DESC").
+			Limit(int(limit)).
+			Scan(ctx, &logs)
+	} else {
+		err = s.DB.NewSelect().
+			Model((*ActivityLog)(nil)).
+			Where("user_id=?", userId).
+			Order("id DESC").
+			Limit(int(limit)).
+			Scan(ctx, &logs)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}

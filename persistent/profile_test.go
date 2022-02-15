@@ -19,7 +19,7 @@ func TestProfileServiceCreate(t *testing.T) {
 	db := PgOpenTest(ctx)
 	defer db.Close()
 
-	service := &ProfileService{
+	service := &ProfileStore{
 		DB: db,
 	}
 

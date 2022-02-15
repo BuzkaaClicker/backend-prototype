@@ -142,7 +142,7 @@ func (s *SessionStore) activeSessions(tx *buntdb.Tx, token string) ([]buzza.Sess
 	var listErr error
 	err := tx.Ascend("sessions", func(key, value string) bool {
 		var session Session
-		if err := json.Unmarshal([]byte(value), session); err != nil {
+		if err := json.Unmarshal([]byte(value), &session); err != nil {
 			listErr = fmt.Errorf("deserialize session: %s", err)
 			return false
 		}

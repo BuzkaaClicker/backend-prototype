@@ -21,5 +21,6 @@ type ActivityLog struct {
 type ActivityStore interface {
 	AddLog(ctx context.Context, userId UserId, activity Activity) error
 
-	ByUserId(ctx context.Context, userId UserId) ([]ActivityLog, error)
+	// "beforeId" - get logs before log with given id. If lower than 0 then gets recent logs up to "limit".
+	ByUserId(ctx context.Context, userId UserId, beforeId int64, limit int32) ([]ActivityLog, error)
 }

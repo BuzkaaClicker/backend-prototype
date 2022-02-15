@@ -2,6 +2,7 @@ package rest
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/buzkaaclicker/buzza"
 	"github.com/gofiber/fiber/v2"
@@ -20,11 +21,24 @@ func (c *ActivityController) lastActivityHandler(authorizationHandler fiber.Hand
 }
 
 func (c *ActivityController) serveLastActivity(ctx *fiber.Ctx) error {
-	user, ok := ctx.Locals(userLocalsKey).(*buzza.User)
+	user, ok := ctx.Locals(userLocalsKey).(buzza.User)
 	if !ok {
 		return fiber.ErrUnauthorized
 	}
-	logs, err := c.Store.ByUserId(ctx.Context(), user.Id)
+	beforeIdRaw := ctx.Query("before")
+	var beforeId int64
+	if beforeIdRaw != "" {
+		var err error
+		beforeId, err = strconv.ParseInt(beforeIdRaw, 10, 64)
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid before id")
+		}
+	} else {
+		beforeId = -1
+	}
+
+	const activityLimit = 100
+	logs, err := c.Store.ByUserId(ctx.Context(), user.Id, beforeId, activityLimit)
 	if err != nil {
 		return fmt.Errorf("get logs by user id: %w", err)
 	}

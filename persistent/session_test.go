@@ -38,7 +38,7 @@ func TestSessionRegisterAndRefresh(t *testing.T) {
 	assert.Equal("192.168.0.101", session.Ip)
 	assert.Equal("Chrome/openBased", session.UserAgent)
 
-	logs, err := activityStore.ByUserId(ctx, session.UserId)
+	logs, err := activityStore.ByUserId(ctx, session.UserId, -1, 100)
 	if !assert.NoError(err) {
 		return
 	}
@@ -53,7 +53,7 @@ func TestSessionRegisterAndRefresh(t *testing.T) {
 		if !assert.NoError(err) {
 			return
 		}
-		refreshedLogs, err := activityStore.ByUserId(ctx, session.UserId)
+		refreshedLogs, err := activityStore.ByUserId(ctx, session.UserId, -1, 100)
 		if !assert.NoError(err) {
 			return
 		}
@@ -67,17 +67,17 @@ func TestSessionRegisterAndRefresh(t *testing.T) {
 		if !assert.NoError(err) {
 			return
 		}
-		refreshedLogs, err := activityStore.ByUserId(ctx, session.UserId)
+		refreshedLogs, err := activityStore.ByUserId(ctx, session.UserId, -1, 100)
 		if !assert.NoError(err) {
 			return
 		}
 		assert.Equal(len(logs)+1, len(refreshedLogs))
 
-		lastLog := refreshedLogs[len(refreshedLogs)-1]
-		if assert.Equal("session_changed_ip", lastLog.Name) {
-			assert.Equal(session.Id, lastLog.Data["session_id"])
-			assert.Equal("192.168.0.101", lastLog.Data["previous_ip"])
-			assert.Equal("192.168.0.102", lastLog.Data["new_ip"])
+		latestLog := refreshedLogs[0]
+		if assert.Equal("session_changed_ip", latestLog.Name) {
+			assert.Equal(session.Id, latestLog.Data["session_id"])
+			assert.Equal("192.168.0.101", latestLog.Data["previous_ip"])
+			assert.Equal("192.168.0.102", latestLog.Data["new_ip"])
 		}
 	}
 
@@ -87,17 +87,17 @@ func TestSessionRegisterAndRefresh(t *testing.T) {
 		if !assert.NoError(err) {
 			return
 		}
-		refreshedLogs, err := activityStore.ByUserId(ctx, session.UserId)
+		refreshedLogs, err := activityStore.ByUserId(ctx, session.UserId, -1, 100)
 		if !assert.NoError(err) {
 			return
 		}
 		assert.Equal(len(logs)+2, len(refreshedLogs))
 
-		lastLog := refreshedLogs[len(refreshedLogs)-1]
-		if assert.Equal("session_changed_user_agent", lastLog.Name) {
-			assert.Equal(session.Id, lastLog.Data["session_id"])
-			assert.Equal("Chrome/openBased", lastLog.Data["previous_user_agent"])
-			assert.Equal("Safari/macbockOS", lastLog.Data["new_user_agent"])
+		latestLog := refreshedLogs[0]
+		if assert.Equal("session_changed_user_agent", latestLog.Name) {
+			assert.Equal(session.Id, latestLog.Data["session_id"])
+			assert.Equal("Chrome/openBased", latestLog.Data["previous_user_agent"])
+			assert.Equal("Safari/macbockOS", latestLog.Data["new_user_agent"])
 		}
 	}
 }

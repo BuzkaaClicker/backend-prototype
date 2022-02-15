@@ -59,7 +59,7 @@ func (c *ProfileController) ServeProfile(ctx *fiber.Ctx) error {
 	if userIdStr == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "no user id")
 	}
-	userId, err := strconv.ParseInt(userIdStr, 10, 0)
+	userId, err := strconv.ParseInt(userIdStr, 10, 64)
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid user id")
 	}

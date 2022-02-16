@@ -49,6 +49,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/godbus/dbus/v5 v5.0.6 // indirect
 	github.com/golang/protobuf v1.5.0 // indirect
+	github.com/google/uuid v1.3.0
 	github.com/gotestyourself/gotestyourself v2.2.0+incompatible // indirect
 	github.com/klauspost/compress v1.14.2 // indirect
 	github.com/lib/pq v1.10.4 // indirect

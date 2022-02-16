@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/buzkaaclicker/buzza"
+	"github.com/google/uuid"
 	"github.com/tidwall/buntdb"
 )
 
@@ -52,18 +53,15 @@ func (s *SessionStore) RegisterNew(ctx context.Context, userId buzza.UserId, ip 
 	if err != nil {
 		return buzza.Session{}, fmt.Errorf("generate token: %s", err)
 	}
-	// token do inwalidowania innych sesji (by nie wysyłać tokenu do autoryzacji ;)
-	id, err := generateSessionToken()
-	if err != nil {
-		return buzza.Session{}, fmt.Errorf("generate session id: %s", err)
-	}
+	id := uuid.New().String()
 
 	err = s.ActivityStore.AddLog(ctx, userId, buzza.Activity{Name: "session_created", Data: map[string]interface{}{
-		"ip":        ip,
-		"userAgent": userAgent,
+		"ip":         ip,
+		"userAgent":  userAgent,
+		"session_id": id,
 	}})
 	if err != nil {
-		return buzza.Session{}, fmt.Errorf("add logged in activity: %s", err)
+		return buzza.Session{}, fmt.Errorf("add session_created activity log: %s", err)
 	}
 
 	session := Session{
@@ -83,9 +81,12 @@ func (s *SessionStore) RegisterNew(ctx context.Context, userId buzza.UserId, ip 
 	err = s.Buntdb.Update(func(tx *buntdb.Tx) error {
 		expireOptions := &buntdb.SetOptions{Expires: true, TTL: sessionTTL}
 
-		_, _, err = tx.Set("session_by_id:"+session.Id, session.Token, expireOptions)
+		_, replaced, err := tx.Set("session_by_id:"+session.Id, session.Token, expireOptions)
 		if err != nil {
 			return fmt.Errorf("set map session id to auth token: %w", err)
+		}
+		if replaced {
+			return fmt.Errorf("rarest uuid collision '%s' (not possible)", session.Id)
 		}
 
 		_, _, err = tx.Set("session:"+session.Token, string(serializedSession), expireOptions)
@@ -211,31 +212,34 @@ func (s *SessionStore) AcquireAndRefresh(ctx context.Context, token string, ip s
 		return buzza.Session{}, fmt.Errorf("serialize session: %s", err)
 	}
 
-	if previousSession.Ip != session.Ip {
-		activity := buzza.Activity{Name: "session_changed_ip", Data: map[string]interface{}{
-			"session_id":  session.Id,
-			"previous_ip": previousSession.Ip,
-			"new_ip":      session.Ip,
-		}}
-		if err := s.ActivityStore.AddLog(ctx, buzza.UserId(session.UserId), activity); err != nil {
-			return buzza.Session{}, fmt.Errorf("log ip change: %s", err)
-		}
-	}
-	if previousSession.UserAgent != session.UserAgent {
-		activity := buzza.Activity{Name: "session_changed_user_agent", Data: map[string]interface{}{
-			"session_id":          session.Id,
-			"previous_user_agent": previousSession.UserAgent,
-			"new_user_agent":      session.UserAgent,
-		}}
-		if err := s.ActivityStore.AddLog(ctx, buzza.UserId(session.UserId), activity); err != nil {
-			return buzza.Session{}, fmt.Errorf("log useragent change: %s", err)
-		}
-	}
-
 	err = s.Buntdb.Update(func(tx *buntdb.Tx) error {
-		_, _, err = tx.Set("session:"+token, string(serializedSession), &buntdb.SetOptions{Expires: true, TTL: sessionTTL})
+		serializedSessionStr := string(serializedSession)
+		_, _, err = tx.Set("session:"+token, serializedSessionStr, &buntdb.SetOptions{Expires: true, TTL: sessionTTL})
 		if err != nil {
 			return fmt.Errorf("store session: %w", err)
+		}
+
+		// nwm nie podobaja mi sie te zapytania do db w tym locku buntowym
+		// todo moze jakas zmiana
+		if previousSession.Ip != session.Ip {
+			activity := buzza.Activity{Name: "session_changed_ip", Data: map[string]interface{}{
+				"session_id":  session.Id,
+				"previous_ip": previousSession.Ip,
+				"new_ip":      session.Ip,
+			}}
+			if err := s.ActivityStore.AddLog(ctx, buzza.UserId(session.UserId), activity); err != nil {
+				return fmt.Errorf("log ip change: %s", err)
+			}
+		}
+		if previousSession.UserAgent != session.UserAgent {
+			activity := buzza.Activity{Name: "session_changed_user_agent", Data: map[string]interface{}{
+				"session_id":          session.Id,
+				"previous_user_agent": previousSession.UserAgent,
+				"new_user_agent":      session.UserAgent,
+			}}
+			if err := s.ActivityStore.AddLog(ctx, buzza.UserId(session.UserId), activity); err != nil {
+				return fmt.Errorf("log useragent change: %s", err)
+			}
 		}
 		return nil
 	})
